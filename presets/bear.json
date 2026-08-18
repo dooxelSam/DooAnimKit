@@ -1,0 +1,168 @@
+{
+    "pins": [
+        {
+            "name": "FKShoulder_R",
+            "u": 0.33,
+            "v": 0.40857787810383744,
+            "shape": "Circle"
+        },
+        {
+            "name": "FKElbow_R",
+            "u": 0.2425,
+            "v": 0.5530474040632054
+        },
+        {
+            "name": "FKWrist_R",
+            "u": 0.175,
+            "v": 0.6794582392776524
+        },
+        {
+            "name": "FKShoulder_L",
+            "u": 0.6718403547671841,
+            "v": 0.412,
+            "shape": "Circle"
+        },
+        {
+            "name": "FKElbow_L",
+            "u": 0.753880266075388,
+            "v": 0.536
+        },
+        {
+            "name": "FKWrist_L",
+            "u": 0.8375,
+            "v": 0.6613995485327314
+        },
+        {
+            "name": "RootX_M",
+            "u": 0.5011086474501109,
+            "v": 0.714,
+            "shape": "Triangle"
+        },
+        {
+            "name": "FKSpine1_M",
+            "u": 0.49889135254988914,
+            "v": 0.596,
+            "shape": "Triangle",
+            "color": "#b9ffeb"
+        },
+        {
+            "name": "FKChest_M",
+            "u": 0.5011086474501109,
+            "v": 0.492,
+            "shape": "Triangle",
+            "color": "#b9ffeb"
+        },
+        {
+            "name": "IKLeg_R",
+            "u": 0.4375,
+            "v": 0.8577878103837472,
+            "shape": "Diamond"
+        },
+        {
+            "name": "IKLeg_L",
+            "u": 0.6075,
+            "v": 0.8645598194130926,
+            "shape": "Diamond"
+        },
+        {
+            "name": "FKNeck_M",
+            "u": 0.4975,
+            "v": 0.37020316027088035,
+            "shape": "Triangle",
+            "color": "#b9ffeb"
+        },
+        {
+            "name": "FKHead_M",
+            "u": 0.4925,
+            "v": 0.13318284424379231,
+            "shape": "Diamond"
+        },
+        {
+            "name": "FKScapula_L",
+            "u": 0.625,
+            "v": 0.33860045146726864,
+            "shape": "Star"
+        },
+        {
+            "name": "FKScapula_R",
+            "u": 0.38,
+            "v": 0.33860045146726864,
+            "shape": "Star"
+        }
+    ],
+    "buttons": [
+        {
+            "label": "AIM",
+            "action_id": "temp_aim_create",
+            "u": 0.7738359201773836,
+            "v": 0.078,
+            "w": 90,
+            "h": 26,
+            "color": "#00BCD4"
+        },
+        {
+            "label": "OFFSET",
+            "action_id": "temp_offset_toggle",
+            "u": 0.0225,
+            "v": 0.01580135440180587,
+            "w": 90,
+            "h": 26,
+            "color": "#E65100"
+        },
+        {
+            "label": "BAKE",
+            "action_id": "bake_selected",
+            "u": 0.3875,
+            "v": 0.013544018058690745,
+            "w": 90,
+            "h": 26,
+            "color": "#43A047"
+        },
+        {
+            "label": "scan",
+            "action_id": "scan_rig",
+            "u": 0.015521064301552107,
+            "v": 0.848,
+            "w": 90,
+            "h": 26,
+            "color": "#5E35B1"
+        },
+        {
+            "label": "copy",
+            "action_id": "copy_pose",
+            "u": 0.011086474501108648,
+            "v": 0.928,
+            "w": 90,
+            "h": 26,
+            "color": "#3949AB"
+        },
+        {
+            "label": "past",
+            "action_id": "paste_pose",
+            "u": 0.23059866962305986,
+            "v": 0.93,
+            "w": 90,
+            "h": 26,
+            "color": "#3949AB"
+        },
+        {
+            "label": "temp",
+            "action_id": "temp_smart",
+            "u": 0.7738359201773836,
+            "v": 0.012,
+            "w": 90,
+            "h": 26,
+            "color": "#1976D2"
+        },
+        {
+            "label": "trail",
+            "action_id": "trail_toggle",
+            "u": 0.024390243902439025,
+            "v": 0.084,
+            "w": 90,
+            "h": 26,
+            "color": "#D81B60"
+        }
+    ],
+    "has_image": true
+}

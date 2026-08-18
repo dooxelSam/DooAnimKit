@@ -1,0 +1,506 @@
+import os
+import json
+import math
+
+try:
+    from PySide6 import QtWidgets, QtGui, QtCore
+except ImportError:
+    from PySide2 import QtWidgets, QtGui, QtCore
+
+import maya.cmds as cmds
+
+
+class SpatialActionCanvas(QtWidgets.QWidget):
+    """Interactive canvas with background character screenshot, customizable pins, and movable action buttons."""
+
+    PIN_RADIUS = 9
+
+    def __init__(self, main_window, parent=None):
+        super(SpatialActionCanvas, self).__init__(parent=parent)
+        self.setMinimumSize(400, 500)
+        self.main_window = main_window
+        self.action_registry = main_window.action_registry
+
+        self.pixmap = None
+        self.pins = []
+        self.buttons = []
+
+        self.is_box_selecting = False
+        self.box_start = QtCore.QPoint()
+        self.box_current = QtCore.QPoint()
+
+        # Drag States (Ctrl + Drag)
+        self.dragged_button = None
+        self.dragged_pin = None
+        self.drag_offset = QtCore.QPoint()
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.presets_dir = os.path.join(base_dir, "presets")
+        self.img_path = os.path.join(self.presets_dir, "picker_img.png")
+        self.data_path = os.path.join(self.presets_dir, "picker_data.json")
+
+        self._ensure_storage_dir()
+        self._load_saved_data()
+
+    def _ensure_storage_dir(self):
+        if not os.path.exists(self.presets_dir):
+            try:
+                os.makedirs(self.presets_dir)
+            except Exception:
+                pass
+
+    def save_state(self):
+        self._ensure_storage_dir()
+        if self.pixmap and not self.pixmap.isNull():
+            self.pixmap.save(self.img_path, "PNG")
+        elif os.path.exists(self.img_path):
+            try:
+                os.remove(self.img_path)
+            except Exception:
+                pass
+
+        data = {"pins": self.pins, "buttons": self.buttons}
+        try:
+            with open(self.data_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Error saving DooAnimKit state: {e}")
+
+    def _load_saved_data(self):
+        if os.path.exists(self.img_path):
+            self.pixmap = QtGui.QPixmap(self.img_path)
+        if os.path.exists(self.data_path):
+            try:
+                with open(self.data_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.pins = data.get("pins", [])
+                    self.buttons = data.get("buttons", [])
+            except Exception:
+                self.pins, self.buttons = [], []
+
+    def paste_image_from_clipboard(self):
+        cb = QtWidgets.QApplication.clipboard()
+        mime = cb.mimeData()
+        if mime.hasImage():
+            self.pixmap = cb.pixmap()
+            self.save_state()
+            self.update()
+            return True
+        cmds.warning("No image found in clipboard! Press Win + Shift + S first.")
+        return False
+
+    def clear_all(self):
+        self.pins.clear()
+        self.buttons.clear()
+        self.pixmap = None
+        self.save_state()
+        self.update()
+
+    def save_preset_to_file(self):
+        file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save Preset", self.presets_dir, "JSON Files (*.json)"
+        )
+        if file_path:
+            if not file_path.endswith(".json"):
+                file_path += ".json"
+            data = {"pins": self.pins, "buttons": self.buttons}
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4)
+                img_file = file_path.replace(".json", "_img.png")
+                if self.pixmap and not self.pixmap.isNull():
+                    self.pixmap.save(img_file, "PNG")
+                elif os.path.exists(img_file):
+                    os.remove(img_file)
+                cmds.inViewMessage(amg="Preset saved successfully!", pos="topCenter", fade=True)
+            except Exception as e:
+                cmds.warning(f"Failed to save preset: {e}")
+
+    def open_preset_from_file(self):
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Open Preset", self.presets_dir, "JSON Files (*.json)"
+        )
+        if file_path and os.path.exists(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.pins = data.get("pins", [])
+                    self.buttons = data.get("buttons", [])
+                img_file = file_path.replace(".json", "_img.png")
+                self.pixmap = QtGui.QPixmap(img_file) if os.path.exists(img_file) else None
+                self.save_state()
+                self.update()
+                cmds.inViewMessage(amg="Preset loaded successfully!", pos="topCenter", fade=True)
+            except Exception as e:
+                cmds.warning(f"Failed to load preset: {e}")
+
+    def _get_image_rect(self):
+        if not self.pixmap or self.pixmap.isNull():
+            return QtCore.QRect()
+        scaled = self.pixmap.scaled(self.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        return QtCore.QRect(
+            (self.width() - scaled.width()) // 2,
+            (self.height() - scaled.height()) // 2,
+            scaled.width(),
+            scaled.height()
+        )
+
+    def _get_btn_rect(self, btn, img_rect):
+        bx = img_rect.x() + int(btn["u"] * img_rect.width())
+        by = img_rect.y() + int(btn["v"] * img_rect.height())
+        return QtCore.QRect(bx, by, btn.get("w", 95), btn.get("h", 26))
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        img_rect = self._get_image_rect()
+
+        if self.pixmap and not self.pixmap.isNull():
+            painter.drawPixmap(img_rect, self.pixmap)
+        else:
+            painter.setPen(QtGui.QColor(130, 130, 130))
+            painter.drawText(
+                self.rect(), QtCore.Qt.AlignCenter,
+                "1. Take screenshot (Win + Shift + S)\n"
+                "2. Click 'Paste Screenshot'\n"
+                "3. RMB: Tools / Add Pin / Save / Open\n"
+                "4. Menu click: Run Action | Ctrl + Menu Click: Spawn Button\n"
+                "5. Ctrl + Left Drag: Move Buttons / Pins"
+            )
+
+        if img_rect.isEmpty():
+            return
+
+        is_offset_on = getattr(self.main_window.temp_ctrl_mgr, "offset_active", False)
+
+        # Draw Buttons
+        for btn in self.buttons:
+            brect = self._get_btn_rect(btn, img_rect)
+            is_offset_btn = (btn.get("action_id") == "temp_offset_toggle")
+
+            if is_offset_btn and is_offset_on:
+                bg_col = QtGui.QColor("#E65100")
+                border_pen = QtGui.QPen(QtGui.QColor("#FFCC80"), 2.5)
+                display_label = f"⏱ [ON] {btn.get('label', 'Offset')}"
+            else:
+                bg_col = QtGui.QColor(btn.get("color", "#336699"))
+                border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
+                display_label = btn.get("label", "Action")
+
+            painter.setBrush(QtGui.QBrush(bg_col))
+            painter.setPen(border_pen)
+            painter.drawRoundedRect(brect, 5, 5)
+
+            painter.setPen(QtCore.Qt.white)
+            font = painter.font()
+            font.setBold(True)
+            font.setPointSize(8)
+            painter.setFont(font)
+            painter.drawText(brect, QtCore.Qt.AlignCenter, display_label)
+
+        # Draw Pins
+        for pin in self.pins:
+            px = img_rect.x() + int(pin["u"] * img_rect.width())
+            py = img_rect.y() + int(pin["v"] * img_rect.height())
+
+            if "color" in pin and pin["color"]:
+                brush_col = QtGui.QColor(pin["color"])
+            else:
+                name = pin["name"].lower()
+                if name.startswith(("l_", "left_")) or name.endswith(("_l", "_left")):
+                    brush_col = QtGui.QColor(33, 150, 243, 230)
+                elif name.startswith(("r_", "right_")) or name.endswith(("_r", "_right")):
+                    brush_col = QtGui.QColor(244, 67, 54, 230)
+                else:
+                    brush_col = QtGui.QColor(255, 193, 7, 230)
+
+            painter.setBrush(QtGui.QBrush(brush_col))
+            painter.setPen(QtGui.QPen(QtCore.Qt.white, 1.5))
+
+            shape = pin.get("shape", "Circle")
+            r = self.PIN_RADIUS
+
+            if shape == "Square":
+                painter.drawRect(QtCore.QRectF(px - r, py - r, r * 2, r * 2))
+            elif shape == "Triangle":
+                polygon = QtGui.QPolygonF([
+                    QtCore.QPointF(px, py - r - 2),
+                    QtCore.QPointF(px - r - 1, py + r),
+                    QtCore.QPointF(px + r + 1, py + r)
+                ])
+                painter.drawPolygon(polygon)
+            elif shape == "Diamond":
+                polygon = QtGui.QPolygonF([
+                    QtCore.QPointF(px, py - r - 2),
+                    QtCore.QPointF(px + r + 1, py),
+                    QtCore.QPointF(px, py + r + 2),
+                    QtCore.QPointF(px - r - 1, py)
+                ])
+                painter.drawPolygon(polygon)
+            elif shape == "Star":
+                path = QtGui.QPainterPath()
+                points = 5
+                outer_r = r + 2
+                inner_r = r * 0.4
+                for i in range(2 * points):
+                    angle = i * math.pi / points - math.pi / 2
+                    curr_r = outer_r if i % 2 == 0 else inner_r
+                    x = px + curr_r * math.cos(angle)
+                    y = py + curr_r * math.sin(angle)
+                    if i == 0:
+                        path.moveTo(x, y)
+                    else:
+                        path.lineTo(x, y)
+                path.closeSubpath()
+                painter.drawPath(path)
+            else:
+                painter.drawEllipse(QtCore.QPoint(px, py), r, r)
+
+        # Draw Marquee Box
+        if self.is_box_selecting:
+            box_rect = QtCore.QRect(self.box_start, self.box_current).normalized()
+            painter.setPen(QtGui.QPen(QtGui.QColor(0, 229, 255), 1.5, QtCore.Qt.DashLine))
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 229, 255, 40)))
+            painter.drawRect(box_rect)
+
+    def mousePressEvent(self, event):
+        img_rect = self._get_image_rect()
+        if img_rect.isEmpty():
+            return
+
+        if event.button() == QtCore.Qt.RightButton:
+            self._show_context_menu(event.pos(), img_rect)
+            return
+
+        if event.button() == QtCore.Qt.LeftButton:
+            # 1. Action Buttons
+            for btn in reversed(self.buttons):
+                brect = self._get_btn_rect(btn, img_rect)
+                if brect.contains(event.pos()):
+                    if event.modifiers() & QtCore.Qt.ControlModifier:
+                        self.dragged_button = btn
+                        self.drag_offset = event.pos() - brect.topLeft()
+                    else:
+                        self.action_registry.execute(btn["action_id"])
+                        self.main_window.sync_ui_state()
+                    return
+
+            # 2. Pins
+            for pin in reversed(self.pins):
+                px = img_rect.x() + int(pin["u"] * img_rect.width())
+                py = img_rect.y() + int(pin["v"] * img_rect.height())
+                if ((event.pos().x() - px)**2 + (event.pos().y() - py)**2)**0.5 <= self.PIN_RADIUS + 4:
+                    if event.modifiers() & QtCore.Qt.ControlModifier:
+                        self.dragged_pin = pin
+                        self.drag_offset = event.pos() - QtCore.QPoint(px, py)
+                    else:
+                        add_mode = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
+                        if cmds.objExists(pin["name"]):
+                            cmds.select(pin["name"], add=add_mode)
+                    return
+
+            # 3. Canvas Selection Box
+            self.is_box_selecting = True
+            self.box_start = event.pos()
+            self.box_current = event.pos()
+
+    def mouseMoveEvent(self, event):
+        img_rect = self._get_image_rect()
+        if self.dragged_button and not img_rect.isEmpty():
+            new_top_left = event.pos() - self.drag_offset
+            u_coord = (new_top_left.x() - img_rect.x()) / float(img_rect.width())
+            v_coord = (new_top_left.y() - img_rect.y()) / float(img_rect.height())
+            self.dragged_button["u"] = max(0.0, min(0.95, u_coord))
+            self.dragged_button["v"] = max(0.0, min(0.95, v_coord))
+            self.update()
+        elif self.dragged_pin and not img_rect.isEmpty():
+            new_center = event.pos() - self.drag_offset
+            u_coord = (new_center.x() - img_rect.x()) / float(img_rect.width())
+            v_coord = (new_center.y() - img_rect.y()) / float(img_rect.height())
+            self.dragged_pin["u"] = max(0.0, min(1.0, u_coord))
+            self.dragged_pin["v"] = max(0.0, min(1.0, v_coord))
+            self.update()
+        elif self.is_box_selecting:
+            self.box_current = event.pos()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if self.dragged_button:
+            self.dragged_button = None
+            self.save_state()
+            return
+
+        if self.dragged_pin:
+            self.dragged_pin = None
+            self.save_state()
+            return
+
+        if event.button() == QtCore.Qt.LeftButton and self.is_box_selecting:
+            self.is_box_selecting = False
+            img_rect = self._get_image_rect()
+            if img_rect.isEmpty():
+                return
+
+            box = QtCore.QRect(self.box_start, self.box_current).normalized()
+            add_mode = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
+
+            selected = []
+            for pin in self.pins:
+                px = img_rect.x() + int(pin["u"] * img_rect.width())
+                py = img_rect.y() + int(pin["v"] * img_rect.height())
+                if box.contains(QtCore.QPoint(px, py)) and cmds.objExists(pin["name"]):
+                    selected.append(pin["name"])
+            if selected:
+                cmds.select(selected, add=add_mode)
+
+            self.update()
+
+    def _show_context_menu(self, pos, img_rect):
+        menu = QtWidgets.QMenu(self)
+
+        # Check Pin Under Cursor
+        clicked_pin = None
+        for pin in self.pins:
+            px = img_rect.x() + int(pin["u"] * img_rect.width())
+            py = img_rect.y() + int(pin["v"] * img_rect.height())
+            if ((pos.x() - px)**2 + (pos.y() - py)**2)**0.5 <= self.PIN_RADIUS + 5:
+                clicked_pin = pin
+                break
+
+        if clicked_pin:
+            menu.addSection(f"Pin: {clicked_pin['name']}")
+            shape_menu = menu.addMenu("🔷 Change Shape")
+            shapes_list = ["Circle", "Square", "Triangle", "Diamond", "Star"]
+            shape_actions = {shape_menu.addAction(s): s for s in shapes_list}
+
+            color_action = menu.addAction("🎨 Pick Custom Color")
+            reset_color_action = menu.addAction("🔄 Reset Default Color")
+            menu.addSeparator()
+            delete_pin_action = menu.addAction("🗑 Delete Pin")
+
+            chosen = menu.exec_(self.mapToGlobal(pos))
+            if chosen in shape_actions:
+                clicked_pin["shape"] = shape_actions[chosen]
+                self.save_state()
+                self.update()
+            elif chosen == color_action:
+                col = QtWidgets.QColorDialog.getColor(QtGui.QColor(clicked_pin.get("color", "#2196F3")), self, "Select Pin Color")
+                if col.isValid():
+                    clicked_pin["color"] = col.name()
+                    self.save_state()
+                    self.update()
+            elif chosen == reset_color_action:
+                if "color" in clicked_pin:
+                    del clicked_pin["color"]
+                self.save_state()
+                self.update()
+            elif chosen == delete_pin_action:
+                self.pins.remove(clicked_pin)
+                self.save_state()
+                self.update()
+            return
+
+        # 1. Add Pin
+        action_add_pin = menu.addAction("📍 Add Pin")
+        menu.addSeparator()
+
+        # 2. Structured Tools Submenu
+        tools_menu = menu.addMenu("🛠 Tools")
+        all_actions = self.action_registry.get_action_list()
+
+        categories_map = {
+            "Temp Controls": tools_menu.addMenu("⚡ Temp Controls"),
+            "Pose": tools_menu.addMenu("🧘 Pose"),
+            "Animation": tools_menu.addMenu("🎬 Animation"),
+            "Bake": tools_menu.addMenu("🎯 Bake")
+        }
+
+        # Populate Grouped Categories
+        for act in all_actions:
+            cat = act.get("category")
+            if cat in categories_map:
+                item = categories_map[cat].addAction(act["name"])
+                item.setData(act)
+
+        # Populate Direct Tools
+        tools_menu.addSeparator()
+        for direct_id, direct_title in [("temp_offset_toggle", "⏱ Offset"), ("trail_toggle", "🎨 Motion Trail")]:
+            act = next((a for a in all_actions if a["id"] == direct_id), None)
+            if act:
+                item = tools_menu.addAction(direct_title)
+                item.setData(act)
+
+        tools_menu.addSeparator()
+        for direct_id, direct_title in [("scan_rig", "🔍 Scan Rig"), ("default_pose", "🔄 Default Pose")]:
+            act = next((a for a in all_actions if a["id"] == direct_id), None)
+            if act:
+                item = tools_menu.addAction(direct_title)
+                item.setData(act)
+
+        # 3. Presets
+        menu.addSeparator()
+        action_save_preset = menu.addAction("💾 Save Preset")
+        action_open_preset = menu.addAction("📂 Open Preset")
+
+        # 4. Check Button Under Cursor for deletion
+        del_target_btn = None
+        for btn in self.buttons:
+            if self._get_btn_rect(btn, img_rect).contains(pos):
+                del_target_btn = btn
+                break
+
+        if del_target_btn:
+            menu.addSeparator()
+            action_delete = menu.addAction("🗑 Delete Button Under Cursor")
+        else:
+            action_delete = None
+
+        chosen = menu.exec_(self.mapToGlobal(pos))
+        norm_u = (pos.x() - img_rect.x()) / float(img_rect.width())
+        norm_v = (pos.y() - img_rect.y()) / float(img_rect.height())
+
+        # Check if Ctrl was held during menu item selection
+        ctrl_held = bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier)
+
+        if chosen == action_add_pin:
+            sel = cmds.ls(selection=True, type="transform")
+            if not sel:
+                cmds.warning("Please select a controller in Maya before creating a Pin!")
+                return
+            self.pins.append({"name": sel[0], "u": norm_u, "v": norm_v, "shape": "Circle"})
+            self.save_state()
+            self.update()
+
+        elif chosen == action_save_preset:
+            self.save_preset_to_file()
+
+        elif chosen == action_open_preset:
+            self.open_preset_from_file()
+
+        elif chosen == action_delete:
+            if del_target_btn and del_target_btn in self.buttons:
+                self.buttons.remove(del_target_btn)
+            self.save_state()
+            self.update()
+
+        elif chosen and chosen.data():
+            act_data = chosen.data()
+            if ctrl_held:
+                # Ctrl + Click: Create Action Button on Canvas
+                label, ok = QtWidgets.QInputDialog.getText(self, "Button Label", "Enter button label:", text=act_data["name"])
+                if ok and label:
+                    self.buttons.append({
+                        "label": label,
+                        "action_id": act_data["id"],
+                        "u": norm_u,
+                        "v": norm_v,
+                        "w": max(90, len(label) * 8),
+                        "h": 26,
+                        "color": act_data.get("color", "#336699")
+                    })
+                    self.save_state()
+                    self.update()
+            else:
+                # Regular Click: Execute Action Immediately
+                self.action_registry.execute(act_data["id"])
+                self.main_window.sync_ui_state()

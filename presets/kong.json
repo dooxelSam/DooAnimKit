@@ -1,0 +1,109 @@
+{
+    "pins": [
+        {
+            "name": "FKShoulder_R",
+            "u": 0.37462235649546827,
+            "v": 0.282,
+            "shape": "Circle"
+        },
+        {
+            "name": "FKShoulder_L",
+            "u": 0.5755287009063444,
+            "v": 0.274,
+            "shape": "Circle"
+        },
+        {
+            "name": "FKElbow_R",
+            "u": 0.28700906344410876,
+            "v": 0.378,
+            "shape": "Circle"
+        },
+        {
+            "name": "FKWrist_R",
+            "u": 0.20694864048338368,
+            "v": 0.45,
+            "shape": "Circle"
+        },
+        {
+            "name": "FKElbow_L",
+            "u": 0.6722054380664653,
+            "v": 0.378,
+            "shape": "Circle"
+        },
+        {
+            "name": "FKWrist_L",
+            "u": 0.7507552870090635,
+            "v": 0.454,
+            "shape": "Circle"
+        },
+        {
+            "name": "RootX_M",
+            "u": 0.48338368580060426,
+            "v": 0.544,
+            "shape": "Diamond"
+        },
+        {
+            "name": "IKLeg_R",
+            "u": 0.43051359516616317,
+            "v": 0.816,
+            "shape": "Circle"
+        },
+        {
+            "name": "IKLeg_L",
+            "u": 0.5347432024169184,
+            "v": 0.81,
+            "shape": "Circle"
+        },
+        {
+            "name": "FKNeck_M",
+            "u": 0.48338368580060426,
+            "v": 0.28,
+            "shape": "Circle"
+        },
+        {
+            "name": "FKHead_M",
+            "u": 0.48338368580060426,
+            "v": 0.114,
+            "shape": "Circle"
+        }
+    ],
+    "buttons": [
+        {
+            "label": "temp",
+            "action_id": "temp_smart",
+            "u": 0.8308157099697885,
+            "v": 0.018,
+            "w": 90,
+            "h": 26,
+            "color": "#1976D2"
+        },
+        {
+            "label": "aim",
+            "action_id": "temp_aim_create",
+            "u": 0.8308157099697885,
+            "v": 0.082,
+            "w": 90,
+            "h": 26,
+            "color": "#00BCD4"
+        },
+        {
+            "label": "bake",
+            "action_id": "bake_selected",
+            "u": 0.8338368580060423,
+            "v": 0.198,
+            "w": 90,
+            "h": 26,
+            "color": "#43A047"
+        },
+        {
+            "label": "offset",
+            "action_id": "temp_offset_toggle",
+            "u": 0.6722054380664653,
+            "v": 0.018,
+            "w": 90,
+            "h": 26,
+            "color": "#E65100"
+        }
+    ],
+    "has_image": true
+}
