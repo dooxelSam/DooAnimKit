@@ -1,35 +1,23 @@
 {
-    "pins": [
-        {
-            "name": "FKElbow_R",
-            "u": 0.2838063439065108,
-            "v": 0.398
-        },
-        {
-            "name": "FKElbow_L",
-            "u": 0.6878130217028381,
-            "v": 0.376,
-            "shape": "Circle"
-        }
-    ],
+    "pins": [],
     "buttons": [
         {
             "label": "Aim",
             "action_id": "temp_aim_create",
-            "u": 0.7178631051752922,
-            "v": 0.664,
+            "u": 0.95,
+            "v": 0.304,
             "w": 90,
             "h": 26,
             "color": "#00BCD4"
         },
         {
-            "label": "Selected",
-            "action_id": "bake_selected",
-            "u": 0.7796327212020033,
-            "v": 0.802,
+            "label": "Smart",
+            "action_id": "temp_smart",
+            "u": 0.95,
+            "v": 0.464,
             "w": 90,
             "h": 26,
-            "color": "#43A047"
+            "color": "#1976D2"
         }
     ]
 }
