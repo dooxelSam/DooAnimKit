@@ -15,6 +15,46 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
     PIN_RADIUS = 9
 
+    MENU_STYLE = """
+        QMenu {
+            background-color: #1e222b;
+            color: #eceff1;
+            border: 1px solid #37474f;
+            border-radius: 6px;
+            padding: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        QMenu::item {
+            padding: 5px 22px 5px 10px;
+            border-radius: 4px;
+            margin: 1px 2px;
+        }
+        QMenu::item:selected {
+            background-color: #00838f;
+            color: #ffffff;
+        }
+        QMenu::item:disabled {
+            color: #546e7a;
+        }
+        QMenu::separator {
+            height: 1px;
+            background-color: #37474f;
+            margin: 4px 6px;
+        }
+        QMenu::section {
+            background-color: #263238;
+            color: #00bcd4;
+            padding: 4px 8px;
+            font-size: 10px;
+            font-weight: bold;
+            border-radius: 3px;
+        }
+        QMenu::right-arrow {
+            margin-right: 6px;
+        }
+    """
+
     def __init__(self, main_window, parent=None):
         super(SpatialActionCanvas, self).__init__(parent=parent)
         self.setMinimumSize(400, 500)
@@ -33,6 +73,9 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         self.dragged_button = None
         self.dragged_pin = None
         self.drag_offset = QtCore.QPoint()
+
+        # Context menu spawn click cache
+        self.last_menu_pos_norm = (0.5, 0.5)
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.presets_dir = os.path.join(base_dir, "presets")
@@ -355,8 +398,38 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
             self.update()
 
+    def _handle_action_trigger(self, act):
+        """Unified action trigger: Ctrl spawns button, normal click executes immediately."""
+        ctrl_held = bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier)
+        norm_u, norm_v = self.last_menu_pos_norm
+
+        if ctrl_held:
+            label, ok = QtWidgets.QInputDialog.getText(
+                self, "Button Label", "Enter button label:", text=act.get("name", "Action")
+            )
+            if ok and label:
+                self.buttons.append({
+                    "label": label,
+                    "action_id": act["id"],
+                    "u": norm_u,
+                    "v": norm_v,
+                    "w": max(90, len(label) * 8),
+                    "h": 26,
+                    "color": act.get("color", "#336699")
+                })
+                self.save_state()
+                self.update()
+        else:
+            self.action_registry.execute(act["id"])
+            self.main_window.sync_ui_state()
+
     def _show_context_menu(self, pos, img_rect):
+        norm_u = (pos.x() - img_rect.x()) / float(img_rect.width())
+        norm_v = (pos.y() - img_rect.y()) / float(img_rect.height())
+        self.last_menu_pos_norm = (norm_u, norm_v)
+
         menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet(self.MENU_STYLE)
 
         # Check Pin Under Cursor
         clicked_pin = None
@@ -370,6 +443,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         if clicked_pin:
             menu.addSection(f"Pin: {clicked_pin['name']}")
             shape_menu = menu.addMenu("🔷 Change Shape")
+            shape_menu.setStyleSheet(self.MENU_STYLE)
             shapes_list = ["Circle", "Square", "Triangle", "Diamond", "Star"]
             shape_actions = {shape_menu.addAction(s): s for s in shapes_list}
 
@@ -406,6 +480,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
         # 2. Structured Tools Submenu
         tools_menu = menu.addMenu("🛠 Tools")
+        tools_menu.setStyleSheet(self.MENU_STYLE)
         all_actions = self.action_registry.get_action_list()
 
         categories_map = {
@@ -415,12 +490,15 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             "Bake": tools_menu.addMenu("🎯 Bake")
         }
 
-        # Populate Grouped Categories
+        for sub in categories_map.values():
+            sub.setStyleSheet(self.MENU_STYLE)
+
+        # Populate Grouped Categories with direct bound callbacks
         for act in all_actions:
             cat = act.get("category")
             if cat in categories_map:
                 item = categories_map[cat].addAction(act["name"])
-                item.setData(act)
+                item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         # Populate Direct Tools
         tools_menu.addSeparator()
@@ -428,14 +506,14 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
-                item.setData(act)
+                item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         tools_menu.addSeparator()
         for direct_id, direct_title in [("scan_rig", "🔍 Scan Rig"), ("default_pose", "🔄 Default Pose")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
-                item.setData(act)
+                item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         # 3. Presets
         menu.addSeparator()
@@ -456,11 +534,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             action_delete = None
 
         chosen = menu.exec_(self.mapToGlobal(pos))
-        norm_u = (pos.x() - img_rect.x()) / float(img_rect.width())
-        norm_v = (pos.y() - img_rect.y()) / float(img_rect.height())
-
-        # Check if Ctrl was held during menu item selection
-        ctrl_held = bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier)
 
         if chosen == action_add_pin:
             sel = cmds.ls(selection=True, type="transform")
@@ -482,25 +555,3 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.buttons.remove(del_target_btn)
             self.save_state()
             self.update()
-
-        elif chosen and chosen.data():
-            act_data = chosen.data()
-            if ctrl_held:
-                # Ctrl + Click: Create Action Button on Canvas
-                label, ok = QtWidgets.QInputDialog.getText(self, "Button Label", "Enter button label:", text=act_data["name"])
-                if ok and label:
-                    self.buttons.append({
-                        "label": label,
-                        "action_id": act_data["id"],
-                        "u": norm_u,
-                        "v": norm_v,
-                        "w": max(90, len(label) * 8),
-                        "h": 26,
-                        "color": act_data.get("color", "#336699")
-                    })
-                    self.save_state()
-                    self.update()
-            else:
-                # Regular Click: Execute Action Immediately
-                self.action_registry.execute(act_data["id"])
-                self.main_window.sync_ui_state()
