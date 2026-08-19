@@ -4,7 +4,7 @@ from DooAnimKit.core.context import UndoContext
 
 
 class TempAimEngine:
-    """Zero-Offset Temp Aim with Cross/Circle shapes and connection line."""
+    """Zero-Offset Temp Aim Engine with multi-setup baking and cleanup support."""
 
     AIM_AXES = [
         ("+X", (1, 0, 0)),
@@ -20,6 +20,11 @@ class TempAimEngine:
         self.setup_grp = None
         self.aim_crv = None
         self.up_crv = None
+
+    def _get_time_range(self):
+        start = int(cmds.playbackOptions(query=True, minTime=True))
+        end = int(cmds.playbackOptions(query=True, maxTime=True))
+        return start, end
 
     def get_orthogonal_up(self, aim_vec, twist_idx):
         ax, ay, az = aim_vec
@@ -169,24 +174,51 @@ class TempAimEngine:
             cmds.inViewMessage(amg=f"Temp Aim created for <hl>{ctrl}</hl>", pos="topCenter", fade=True)
             return True
 
-    def bake_and_clean(self):
-        ctrl = self.target_ctrl
-        if not ctrl:
-            sel = cmds.ls(selection=True, type="transform")
-            if sel:
-                ctrl = sel[0].replace("_Aim_TARGET", "").replace("_Up_VECTOR", "").replace("_TempAim_GRP", "").replace("_Aim_LINE", "").replace("_GRP", "").replace("_Origin_LOC", "")
+    # --- RESOLVE HELPERS ---
 
-        if not ctrl or not cmds.objExists(ctrl):
+    def _resolve_ctrl_from_item(self, item):
+        """Finds target controller name from any part of the Temp Aim hierarchy or constraints."""
+        if cmds.objExists(f"{item}_TempAim_GRP") or cmds.objExists(f"{item}_TempAimConstraint"):
+            return item
+
+        # Check if item is locator/curve
+        clean = item.replace("_Aim_TARGET", "").replace("_Up_VECTOR", "").replace("_TempAim_GRP", "").replace("_Aim_LINE", "").replace("_Origin_LOC", "").replace("_GRP", "")
+        if cmds.objExists(clean) and (cmds.objExists(f"{clean}_TempAim_GRP") or cmds.objExists(f"{clean}_TempAimConstraint")):
+            return clean
+
+        # Check via constraints on item
+        constraints = cmds.listConnections(item, type="aimConstraint") or []
+        for ac in constraints:
+            if "_TempAimConstraint" in ac:
+                driven = cmds.aimConstraint(ac, query=True, targetList=False) or []
+                if driven:
+                    return driven[0]
+        return None
+
+    # --- BAKE OPERATIONS ---
+
+    def bake_selected(self, custom_sel=None):
+        """Bakes all selected Temp Aim setups."""
+        sel = custom_sel or cmds.ls(selection=True, type="transform") or []
+        if not sel:
             return False
 
-        grp_name = f"{ctrl}_TempAim_GRP"
-        aim_target = f"{ctrl}_Aim_TARGET"
+        ctrls_to_bake = set()
+        for item in sel:
+            resolved = self._resolve_ctrl_from_item(item)
+            if resolved:
+                ctrls_to_bake.add(resolved)
 
-        with UndoContext("BakeTempAim"):
-            if cmds.objExists(grp_name) or cmds.objExists(aim_target):
-                target_keys = self.get_keyframe_times(aim_target)
-                start_frame = int(cmds.playbackOptions(query=True, minTime=True))
-                end_frame = int(cmds.playbackOptions(query=True, maxTime=True))
+        if not ctrls_to_bake:
+            return False
+
+        start_frame, end_frame = self._get_time_range()
+
+        with UndoContext("BakeSelectedTempAim"):
+            for ctrl in ctrls_to_bake:
+                grp_name = f"{ctrl}_TempAim_GRP"
+                aim_target = f"{ctrl}_Aim_TARGET"
+                target_keys = self.get_keyframe_times(aim_target) if cmds.objExists(aim_target) else []
 
                 cmds.bakeResults(
                     ctrl, time=(start_frame, end_frame),
@@ -201,12 +233,63 @@ class TempAimEngine:
 
                 if cmds.objExists(grp_name):
                     cmds.delete(grp_name)
+                # Cleanup loose constraint if exists
+                if cmds.objExists(f"{ctrl}_TempAimConstraint"):
+                    cmds.delete(f"{ctrl}_TempAimConstraint")
 
-                if cmds.objExists(ctrl):
-                    cmds.select(ctrl)
-                cmds.inViewMessage(amg=f"Temp Aim baked on <hl>{ctrl}</hl>", pos="topCenter", fade=True)
-                return True
-        return False
+            cmds.select(list(ctrls_to_bake))
+            cmds.inViewMessage(amg=f"Baked Temp Aim for <hl>{len(ctrls_to_bake)}</hl> controller(s).", pos="topCenter", fade=True)
+            return True
+
+    def bake_all(self):
+        """Finds and bakes ALL Temp Aim setups across the entire scene."""
+        all_aim_grps = cmds.ls("*_TempAim_GRP*", type="transform") or []
+        all_aim_consts = cmds.ls("*_TempAimConstraint*", type="aimConstraint") or []
+
+        ctrls_to_bake = set()
+        for grp in all_aim_grps:
+            ctrl_name = grp.replace("_TempAim_GRP", "")
+            if cmds.objExists(ctrl_name):
+                ctrls_to_bake.add(ctrl_name)
+
+        for ac in all_aim_consts:
+            clean = ac.replace("_TempAimConstraint", "")
+            if cmds.objExists(clean):
+                ctrls_to_bake.add(clean)
+
+        if not ctrls_to_bake:
+            return False
+
+        start_frame, end_frame = self._get_time_range()
+
+        with UndoContext("BakeAllTempAim"):
+            for ctrl in ctrls_to_bake:
+                grp_name = f"{ctrl}_TempAim_GRP"
+                aim_target = f"{ctrl}_Aim_TARGET"
+                target_keys = self.get_keyframe_times(aim_target) if cmds.objExists(aim_target) else []
+
+                cmds.bakeResults(
+                    ctrl, time=(start_frame, end_frame),
+                    attribute=["rotateX", "rotateY", "rotateZ"],
+                    simulation=True, disableImplicitControl=True
+                )
+
+                if target_keys:
+                    for frame in range(start_frame, end_frame + 1):
+                        if frame not in target_keys:
+                            cmds.cutKey(ctrl, attribute=["rotateX", "rotateY", "rotateZ"], time=(frame, frame))
+
+                if cmds.objExists(grp_name):
+                    cmds.delete(grp_name)
+                if cmds.objExists(f"{ctrl}_TempAimConstraint"):
+                    cmds.delete(f"{ctrl}_TempAimConstraint")
+
+            # Final sweep of any remaining aim locators
+            leftovers = cmds.ls("*_Aim_TARGET*", "*_Up_VECTOR*", "*_Origin_LOC*", "*_Aim_LINE*", type="transform") or []
+            if leftovers:
+                cmds.delete(leftovers)
+
+        return True
 
     def discard(self):
         if self.setup_grp and cmds.objExists(self.setup_grp):

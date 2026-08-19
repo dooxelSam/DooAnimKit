@@ -1,10 +1,13 @@
+"""
+Action Registry for DooAnimKit.
+Maintains action database, connects UI widgets, and handles universal bake logic.
+"""
+
 import maya.cmds as cmds
 from DooAnimKit.ui.viewport_aim_hud import ViewportAimHUD
 
 
 class ActionRegistry:
-    """Registry for all DooAnimKit tools mapped cleanly to Categories."""
-
     def __init__(self, main_window):
         self.win = main_window
         self.actions = {}
@@ -20,7 +23,8 @@ class ActionRegistry:
         }
 
     def open_temp_aim_window(self):
-        if self.win.temp_aim_engine.create_setup():
+        """Creates setup preview and opens floating dialog."""
+        if hasattr(self.win, "temp_aim_engine") and self.win.temp_aim_engine.create_setup():
             if hasattr(self.win, "aim_window") and self.win.aim_window is not None:
                 try:
                     self.win.aim_window.close()
@@ -29,21 +33,51 @@ class ActionRegistry:
             self.win.aim_window = ViewportAimHUD(self.win.temp_aim_engine, parent=self.win)
             self.win.aim_window.show()
 
+    # --- UNIVERSAL BAKE LOGIC ---
+
     def universal_bake_selected(self):
+        """Bakes selected Temp Aim, Temp Controls, or regular Rig controllers."""
         sel = cmds.ls(selection=True, type="transform") or []
         if not sel:
-            cmds.warning("Please select an element in Maya to bake!")
+            cmds.warning("Please select a controller, Temp Control, or Aim Locator to bake!")
             return
 
-        aim_handled = False
-        for item in sel:
-            if "_Aim_" in item or "_Up_VECTOR" in item or "_TempAim" in item:
-                self.win.temp_aim_engine.bake_and_clean()
-                aim_handled = True
-                break
+        baked_any = False
 
-        if not aim_handled:
-            self.win.temp_ctrl_mgr.bake_selected()
+        # 1. Запікаємо Temp Aim (якщо серед виділеного є Aim-сетапи або контролери під Aim)
+        if hasattr(self.win, "temp_aim_engine"):
+            aim_result = self.win.temp_aim_engine.bake_selected(sel)
+            if aim_result:
+                baked_any = True
+
+        # 2. Запікаємо Smart Temp Controls або звичайні контролери
+        if hasattr(self.win, "temp_ctrl_mgr"):
+            ctrl_result = self.win.temp_ctrl_mgr.bake_selected()
+            if ctrl_result:
+                baked_any = True
+
+        if not baked_any:
+            cmds.warning("No temporary setups or animation found to bake on selected objects.")
+
+    def universal_bake_all(self):
+        """Bakes and cleans ALL Temp Controls and ALL Temp Aim setups across the scene."""
+        # 1. Запікаємо абсолютно всі Aim сетапи
+        if hasattr(self.win, "temp_aim_engine"):
+            try:
+                self.win.temp_aim_engine.bake_all()
+            except Exception as e:
+                cmds.warning(f"Temp Aim bake all warning: {e}")
+
+        # 2. Запікаємо абсолютно всі Temp Controls і вимикаємо Offset
+        if hasattr(self.win, "temp_ctrl_mgr"):
+            try:
+                self.win.temp_ctrl_mgr.bake_back_all()
+            except Exception as e:
+                cmds.warning(f"Temp Controls bake all warning: {e}")
+
+        cmds.inViewMessage(amg="<hl>Bake All</hl>: All Aim & Temp Controls baked & scene cleaned.", pos="topCenter", fade=True)
+
+    # --- ACTIONS CATALOG ---
 
     def _register_default_actions(self):
         # Temp Controls
@@ -62,9 +96,9 @@ class ActionRegistry:
 
         # Bake
         self.register("bake_selected", "Selected", self.universal_bake_selected, "Bake", "#43A047")
-        self.register("temp_bake_all", "All", self.win.temp_ctrl_mgr.bake_back_all, "Bake", "#2E7D32")
+        self.register("temp_bake_all", "All", self.universal_bake_all, "Bake", "#2E7D32")
 
-        # Standalone Tools
+        # Direct Tools
         self.register("temp_offset_toggle", "Offset", self.win.temp_ctrl_mgr.toggle_offset_mode, "Direct", "#E65100")
         self.register("trail_toggle", "Motion Trail", self.win.trail_mgr.toggle_motion_trail, "Direct", "#D81B60")
         self.register("scan_rig", "Scan Rig", self.win.pose_mirror_engine.scan_selected_rig, "Direct", "#5E35B1")
