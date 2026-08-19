@@ -1,6 +1,6 @@
 """
 Action Registry for DooAnimKit.
-Maintains action database, connects UI widgets, and handles universal bake logic.
+Maintains action database, connects UI widgets, and handles universal bake & pivot logic.
 """
 
 import maya.cmds as cmds
@@ -44,13 +44,11 @@ class ActionRegistry:
 
         baked_any = False
 
-        # 1. Запікаємо Temp Aim (якщо серед виділеного є Aim-сетапи або контролери під Aim)
         if hasattr(self.win, "temp_aim_engine"):
             aim_result = self.win.temp_aim_engine.bake_selected(sel)
             if aim_result:
                 baked_any = True
 
-        # 2. Запікаємо Smart Temp Controls або звичайні контролери
         if hasattr(self.win, "temp_ctrl_mgr"):
             ctrl_result = self.win.temp_ctrl_mgr.bake_selected()
             if ctrl_result:
@@ -61,14 +59,12 @@ class ActionRegistry:
 
     def universal_bake_all(self):
         """Bakes and cleans ALL Temp Controls and ALL Temp Aim setups across the scene."""
-        # 1. Запікаємо абсолютно всі Aim сетапи
         if hasattr(self.win, "temp_aim_engine"):
             try:
                 self.win.temp_aim_engine.bake_all()
             except Exception as e:
                 cmds.warning(f"Temp Aim bake all warning: {e}")
 
-        # 2. Запікаємо абсолютно всі Temp Controls і вимикаємо Offset
         if hasattr(self.win, "temp_ctrl_mgr"):
             try:
                 self.win.temp_ctrl_mgr.bake_back_all()
@@ -83,6 +79,8 @@ class ActionRegistry:
         # Temp Controls
         self.register("temp_smart", "Smart", self.win.temp_ctrl_mgr.create_smart, "Temp Controls", "#1976D2")
         self.register("temp_aim_create", "Aim", self.open_temp_aim_window, "Temp Controls", "#00BCD4")
+        self.register("temp_set_pivot", "Set Pivot Loc", self.win.temp_ctrl_mgr.create_pivot_locator, "Temp Controls", "#AB47BC")
+        self.register("temp_bake_pivot", "Bake Pivot", self.win.temp_ctrl_mgr.apply_pivot_locator, "Temp Controls", "#7E57C2")
 
         # Pose
         self.register("copy_pose", "Copy", self.win.pose_mirror_engine.copy_pose, "Pose", "#3949AB")

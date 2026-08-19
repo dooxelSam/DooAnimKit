@@ -1,17 +1,18 @@
 import maya.cmds as cmds
+import maya.mel as mel
 from DooAnimKit.core.context import UndoContext
 
 
 class TempControlManager:
-    """Universal manager for Temp Controls and Selection-based Live Timeline Offset."""
+    """Universal manager for Temp Controls, Live Timeline Offset, and Clean Pivot Reparenting."""
 
     BOOKMARK_NAME = "AnimKit_Offset_Bookmark"
 
     def __init__(self):
         self.session_data = {}        # {active_temp_loc: [target_ctrls]}
         self.base_curves_cache = {}   # {node: {attr: {frame: val}}}
-        self.script_jobs = []         # Active scriptJob IDs
-        self.attr_jobs = []           # Attribute change scriptJobs
+        self.script_jobs = []
+        self.attr_jobs = []
         self.offset_active = False
         self._is_updating = False
 
@@ -206,6 +207,109 @@ class TempControlManager:
 
         self._on_selection_or_time_changed()
 
+    # --- PIVOT LOCATOR WORKFLOW ---
+
+    def create_pivot_locator(self):
+        """Spawns an interactive pivot locator at the selected Temp Control position."""
+        sel = cmds.ls(selection=True, type="transform") or []
+        if not sel:
+            cmds.warning("Please select an active Temp Control to create a Pivot Locator!")
+            return False
+
+        temp_ctrl = sel[0]
+        piv_name = f"{temp_ctrl}_PIVOT_LOC"
+        if cmds.objExists(piv_name):
+            cmds.delete(piv_name)
+
+        with UndoContext("CreatePivotLocator"):
+            piv_loc = cmds.spaceLocator(name=piv_name)[0]
+            for attr in ['localScaleX', 'localScaleY', 'localScaleZ']:
+                cmds.setAttr(f"{piv_loc}.{attr}", 3)
+
+            for s in cmds.listRelatives(piv_loc, shapes=True) or []:
+                cmds.setAttr(f"{s}.overrideEnabled", 1)
+                cmds.setAttr(f"{s}.overrideColor", 9)
+
+            cmds.matchTransform(piv_loc, temp_ctrl, pos=True, rot=True)
+            cmds.select(piv_loc)
+
+        cmds.inViewMessage(
+            amg=f"Move <hl>{piv_loc}</hl> to new pivot point, then click <hl>'Bake Pivot'</hl>.",
+            pos="topCenter", fade=True
+        )
+        return True
+
+    def apply_pivot_locator(self):
+        """
+        Transfers the animation to the new pivot position seamlessly by rebuilding
+        the Temp Control at the new location without offsets.
+        """
+        sel = cmds.ls(selection=True, type="transform") or []
+
+        piv_loc = None
+        temp_ctrl = None
+
+        if sel and "_PIVOT_LOC" in sel[0]:
+            piv_loc = sel[0]
+            temp_ctrl = piv_loc.replace("_PIVOT_LOC", "")
+        else:
+            piv_locs = cmds.ls("*_PIVOT_LOC*", type="transform") or []
+            if piv_locs:
+                piv_loc = piv_locs[0]
+                temp_ctrl = piv_loc.replace("_PIVOT_LOC", "")
+
+        if not piv_loc or not cmds.objExists(piv_loc) or not temp_ctrl or not cmds.objExists(temp_ctrl):
+            cmds.warning("No active Pivot Locator found in scene! Run 'Set Pivot Loc' first.")
+            return False
+
+        # Збираємо справжні цільові контролери персонажа / кубика
+        targets = self.session_data.get(temp_ctrl, [])
+        if not targets:
+            constraints = cmds.listRelatives(temp_ctrl, allDescendents=True, type="parentConstraint") or []
+            for c in constraints:
+                targets.extend(cmds.parentConstraint(c, query=True, targetList=True) or [])
+
+        if not targets:
+            cmds.warning("Could not resolve target objects for this Temp Control!")
+            return False
+
+        start_frame, end_frame = self._get_time_range()
+
+        with UndoContext("ApplyPivotLocator"):
+            # 1. Запікаємо чисту світову анімацію об'єкта на сам Pivot Locator
+            bake_const = cmds.parentConstraint(targets[0], piv_loc, maintainOffset=True)
+            cmds.bakeResults(
+                piv_loc, time=(start_frame, end_frame), simulation=True,
+                sampleBy=1, disableImplicitControl=True
+            )
+            cmds.delete(bake_const)
+
+            # 2. Повністю видаляємо старий Temp Control та його констрейнти
+            if cmds.objExists(temp_ctrl):
+                cmds.delete(temp_ctrl)
+            if temp_ctrl in self.session_data:
+                del self.session_data[temp_ctrl]
+
+            for t in targets:
+                old_consts = cmds.listConnections(f"{t}.translateX", type="parentConstraint") or []
+                if old_consts:
+                    cmds.delete(old_consts)
+
+            # 3. Перейменовуємо та перетворюємо Pivot Locator на новий повноцінний Temp Control
+            new_temp_ctrl = cmds.rename(piv_loc, temp_ctrl)
+            for s in cmds.listRelatives(new_temp_ctrl, shapes=True) or []:
+                cmds.setAttr(f"{s}.overrideColor", 18)
+
+            # 4. Прив'язуємо персонажа / кубик до нового Temp Control
+            for t in targets:
+                cmds.parentConstraint(new_temp_ctrl, t, maintainOffset=True)
+
+            self.session_data[new_temp_ctrl] = targets
+            cmds.select(new_temp_ctrl)
+
+        cmds.inViewMessage(amg=f"Pivot relocated cleanly to <hl>{new_temp_ctrl}</hl>!", pos="topCenter", fade=True)
+        return True
+
     def apply_timeline_offset(self):
         if not self.base_curves_cache or self._is_updating:
             return
@@ -237,7 +341,7 @@ class TempControlManager:
             self._is_updating = False
 
     def bake_selected(self):
-        """Intelligently bakes only selected controls (deleting temporary nodes, preserving real controls)."""
+        """Intelligently bakes only selected controls."""
         sel = cmds.ls(selection=True, type="transform")
         if not sel:
             cmds.warning("Please select a controller or Temp Rig element to bake!")
@@ -250,7 +354,6 @@ class TempControlManager:
 
         with UndoContext("BakeSelected"):
             for item in sel:
-                # 1. Is this a Temp Control or master group?
                 if item in self.session_data:
                     targets_to_bake.update(self.session_data[item])
                     temp_nodes_to_delete.add(item)
@@ -260,7 +363,6 @@ class TempControlManager:
                         targets_to_bake.update(cmds.parentConstraint(c, query=True, targetList=True) or [])
                     temp_nodes_to_delete.add(item)
                 else:
-                    # Check if this regular controller is driven by a temp node
                     parent_consts = cmds.listConnections(f"{item}.translateX", type="parentConstraint") or []
                     found_temp_driver = False
                     for pc in parent_consts:
@@ -272,10 +374,8 @@ class TempControlManager:
                                 found_temp_driver = True
 
                     if not found_temp_driver:
-                        # Regular controller: Just bake, NEVER delete
                         regular_ctrls_to_bake.add(item)
 
-            # Bake associated temp control targets
             if targets_to_bake:
                 cmds.bakeResults(
                     list(targets_to_bake), time=(start_frame, end_frame), simulation=True,
@@ -287,7 +387,6 @@ class TempControlManager:
                     if node in self.session_data:
                         del self.session_data[node]
 
-            # Bake regular controllers without deleting them
             if regular_ctrls_to_bake:
                 cmds.bakeResults(
                     list(regular_ctrls_to_bake), time=(start_frame, end_frame), simulation=True,
@@ -333,7 +432,7 @@ class TempControlManager:
                     sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=True
                 )
 
-            nodes_to_delete = cmds.ls("*_TEMP_CTRL*", "*_TEMP_LOC*", "*Group_Temp_CTRL*", type="transform")
+            nodes_to_delete = cmds.ls("*_TEMP_CTRL*", "*_TEMP_LOC*", "*Group_Temp_CTRL*", "*_PIVOT_LOC*", type="transform")
             if nodes_to_delete:
                 cmds.delete(nodes_to_delete)
 
