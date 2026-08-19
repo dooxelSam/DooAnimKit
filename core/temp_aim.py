@@ -1,10 +1,11 @@
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 from DooAnimKit.core.context import UndoContext
+from DooAnimKit.core.temp_control import TempControlManager
 
 
 class TempAimEngine:
-    """Zero-Offset Temp Aim Engine with multi-setup baking and cleanup support."""
+    """Zero-Offset Temp Aim Engine with shared global sampling mode."""
 
     AIM_AXES = [
         ("+X", (1, 0, 0)),
@@ -15,7 +16,8 @@ class TempAimEngine:
         ("-Z", (0, 0, -1)),
     ]
 
-    def __init__(self):
+    def __init__(self, main_window=None):
+        self.win = main_window
         self.target_ctrl = None
         self.setup_grp = None
         self.aim_crv = None
@@ -25,6 +27,10 @@ class TempAimEngine:
         start = int(cmds.playbackOptions(query=True, minTime=True))
         end = int(cmds.playbackOptions(query=True, maxTime=True))
         return start, end
+
+    def _is_keys_only(self):
+        """Always reads the single source of truth from TempControlManager."""
+        return TempControlManager.BAKE_KEYS_ONLY
 
     def get_orthogonal_up(self, aim_vec, twist_idx):
         ax, ay, az = aim_vec
@@ -83,7 +89,9 @@ class TempAimEngine:
 
     def get_keyframe_times(self, obj):
         keyframes = cmds.keyframe(obj, query=True, timeChange=True)
-        return sorted(list(set([int(k) for k in keyframes]))) if keyframes else []
+        if not keyframes:
+            return []
+        return sorted(list(set([int(round(float(k))) for k in keyframes])))
 
     def create_setup(self, target_ctrl=None):
         sel = target_ctrl or cmds.ls(selection=True, type="transform")
@@ -125,32 +133,43 @@ class TempAimEngine:
         up_dist = dist * 0.6
 
         existing_keys = self.get_keyframe_times(ctrl)
-        start_frame = int(cmds.playbackOptions(query=True, minTime=True))
+        start_frame, end_frame = self._get_time_range()
+        keys_only = self._is_keys_only()
+
+        # If Keys Only mode and keys exist -> sample only keys; else sample full range
+        if keys_only and existing_keys:
+            frames_to_sample = existing_keys
+        else:
+            frames_to_sample = list(range(start_frame, end_frame + 1))
 
         local_aim_offset = om.MPoint(aim_vec[0] * dist, aim_vec[1] * dist, aim_vec[2] * dist)
         local_up_offset = om.MPoint(up_vec[0] * up_dist, up_vec[1] * up_dist, up_vec[2] * up_dist)
 
         with UndoContext("ApplyTempAim"):
+            final_grp = f"{ctrl}_TempAim_GRP"
+            if cmds.objExists(final_grp):
+                cmds.delete(final_grp)
+            final_grp = cmds.group(em=True, name=final_grp)
+
             if cmds.listRelatives(self.aim_crv, parent=True):
                 cmds.parent(self.aim_crv, world=True)
             if cmds.listRelatives(self.up_crv, parent=True):
                 cmds.parent(self.up_crv, world=True)
 
-            if existing_keys:
-                for frame in existing_keys:
-                    cmds.currentTime(frame)
-                    matrix_list = cmds.xform(ctrl, query=True, ws=True, matrix=True)
-                    ctrl_matrix = om.MMatrix(matrix_list)
+            for frame in frames_to_sample:
+                cmds.currentTime(frame)
+                matrix_list = cmds.xform(ctrl, query=True, ws=True, matrix=True)
+                ctrl_matrix = om.MMatrix(matrix_list)
 
-                    world_aim = local_aim_offset * ctrl_matrix
-                    cmds.setKeyframe(self.aim_crv, time=frame, v=world_aim.x, at="translateX")
-                    cmds.setKeyframe(self.aim_crv, time=frame, v=world_aim.y, at="translateY")
-                    cmds.setKeyframe(self.aim_crv, time=frame, v=world_aim.z, at="translateZ")
+                world_aim = local_aim_offset * ctrl_matrix
+                cmds.setKeyframe(self.aim_crv, time=frame, v=world_aim.x, at="translateX")
+                cmds.setKeyframe(self.aim_crv, time=frame, v=world_aim.y, at="translateY")
+                cmds.setKeyframe(self.aim_crv, time=frame, v=world_aim.z, at="translateZ")
 
-                    world_up = local_up_offset * ctrl_matrix
-                    cmds.setKeyframe(self.up_crv, time=frame, v=world_up.x, at="translateX")
-                    cmds.setKeyframe(self.up_crv, time=frame, v=world_up.y, at="translateY")
-                    cmds.setKeyframe(self.up_crv, time=frame, v=world_up.z, at="translateZ")
+                world_up = local_up_offset * ctrl_matrix
+                cmds.setKeyframe(self.up_crv, time=frame, v=world_up.x, at="translateX")
+                cmds.setKeyframe(self.up_crv, time=frame, v=world_up.y, at="translateY")
+                cmds.setKeyframe(self.up_crv, time=frame, v=world_up.z, at="translateZ")
 
             cmds.aimConstraint(
                 self.aim_crv, ctrl,
@@ -164,29 +183,28 @@ class TempAimEngine:
             cmds.parentConstraint(ctrl, origin_loc, maintainOffset=False)
 
             line_grp = self._create_connection_line(origin_loc, self.aim_crv, f"{ctrl}_Aim_LINE")
-            cmds.group([self.aim_crv, self.up_crv, origin_loc, line_grp], name=f"{ctrl}_TempAim_GRP")
+
+            cmds.parent(self.aim_crv, final_grp)
+            cmds.parent(self.up_crv, final_grp)
+            cmds.parent(origin_loc, final_grp)
+            cmds.parent(line_grp, final_grp)
 
             if self.setup_grp and cmds.objExists(self.setup_grp):
                 cmds.delete(self.setup_grp)
 
             cmds.select(self.aim_crv)
             cmds.currentTime(start_frame)
-            cmds.inViewMessage(amg=f"Temp Aim created for <hl>{ctrl}</hl>", pos="topCenter", fade=True)
+            mode_desc = "Keyframes Only" if (keys_only and existing_keys) else "Every Frame"
+            cmds.inViewMessage(amg=f"Temp Aim created ({mode_desc}) in folder <hl>{final_grp}</hl>", pos="topCenter", fade=True)
             return True
 
-    # --- RESOLVE HELPERS ---
-
     def _resolve_ctrl_from_item(self, item):
-        """Finds target controller name from any part of the Temp Aim hierarchy or constraints."""
         if cmds.objExists(f"{item}_TempAim_GRP") or cmds.objExists(f"{item}_TempAimConstraint"):
             return item
-
-        # Check if item is locator/curve
         clean = item.replace("_Aim_TARGET", "").replace("_Up_VECTOR", "").replace("_TempAim_GRP", "").replace("_Aim_LINE", "").replace("_Origin_LOC", "").replace("_GRP", "")
         if cmds.objExists(clean) and (cmds.objExists(f"{clean}_TempAim_GRP") or cmds.objExists(f"{clean}_TempAimConstraint")):
             return clean
 
-        # Check via constraints on item
         constraints = cmds.listConnections(item, type="aimConstraint") or []
         for ac in constraints:
             if "_TempAimConstraint" in ac:
@@ -195,10 +213,32 @@ class TempAimEngine:
                     return driven[0]
         return None
 
-    # --- BAKE OPERATIONS ---
+    def _bake_single_ctrl(self, ctrl, start_frame, end_frame, keys_only):
+        grp_name = f"{ctrl}_TempAim_GRP"
+        aim_target = f"{ctrl}_Aim_TARGET"
+        target_keys = self.get_keyframe_times(aim_target) if cmds.objExists(aim_target) else []
+
+        # 1. Запікаємо весь діапазон
+        cmds.bakeResults(
+            ctrl, time=(start_frame, end_frame),
+            attribute=["rotateX", "rotateY", "rotateZ"],
+            simulation=True, sampleBy=1, disableImplicitControl=True
+        )
+
+        # 2. Якщо увімкнено Keys Only — фільтруємо зайві проміжні кадри
+        if keys_only and target_keys:
+            valid_set = set(target_keys)
+            all_baked_keys = self.get_keyframe_times(ctrl)
+            for k_frame in all_baked_keys:
+                if k_frame not in valid_set and start_frame <= k_frame <= end_frame:
+                    cmds.cutKey(ctrl, attribute=["rotateX", "rotateY", "rotateZ"], time=(k_frame, k_frame))
+
+        if cmds.objExists(grp_name):
+            cmds.delete(grp_name)
+        if cmds.objExists(f"{ctrl}_TempAimConstraint"):
+            cmds.delete(f"{ctrl}_TempAimConstraint")
 
     def bake_selected(self, custom_sel=None):
-        """Bakes all selected Temp Aim setups."""
         sel = custom_sel or cmds.ls(selection=True, type="transform") or []
         if not sel:
             return False
@@ -213,36 +253,18 @@ class TempAimEngine:
             return False
 
         start_frame, end_frame = self._get_time_range()
+        keys_only = self._is_keys_only()
 
         with UndoContext("BakeSelectedTempAim"):
             for ctrl in ctrls_to_bake:
-                grp_name = f"{ctrl}_TempAim_GRP"
-                aim_target = f"{ctrl}_Aim_TARGET"
-                target_keys = self.get_keyframe_times(aim_target) if cmds.objExists(aim_target) else []
-
-                cmds.bakeResults(
-                    ctrl, time=(start_frame, end_frame),
-                    attribute=["rotateX", "rotateY", "rotateZ"],
-                    simulation=True, disableImplicitControl=True
-                )
-
-                if target_keys:
-                    for frame in range(start_frame, end_frame + 1):
-                        if frame not in target_keys:
-                            cmds.cutKey(ctrl, attribute=["rotateX", "rotateY", "rotateZ"], time=(frame, frame))
-
-                if cmds.objExists(grp_name):
-                    cmds.delete(grp_name)
-                # Cleanup loose constraint if exists
-                if cmds.objExists(f"{ctrl}_TempAimConstraint"):
-                    cmds.delete(f"{ctrl}_TempAimConstraint")
+                self._bake_single_ctrl(ctrl, start_frame, end_frame, keys_only)
 
             cmds.select(list(ctrls_to_bake))
-            cmds.inViewMessage(amg=f"Baked Temp Aim for <hl>{len(ctrls_to_bake)}</hl> controller(s).", pos="topCenter", fade=True)
+            mode_str = "Keyframes Only" if keys_only else "Every Frame"
+            cmds.inViewMessage(amg=f"Baked Temp Aim ({mode_str}) for <hl>{len(ctrls_to_bake)}</hl> controller(s).", pos="topCenter", fade=True)
             return True
 
     def bake_all(self):
-        """Finds and bakes ALL Temp Aim setups across the entire scene."""
         all_aim_grps = cmds.ls("*_TempAim_GRP*", type="transform") or []
         all_aim_consts = cmds.ls("*_TempAimConstraint*", type="aimConstraint") or []
 
@@ -261,34 +283,18 @@ class TempAimEngine:
             return False
 
         start_frame, end_frame = self._get_time_range()
+        keys_only = self._is_keys_only()
 
         with UndoContext("BakeAllTempAim"):
             for ctrl in ctrls_to_bake:
-                grp_name = f"{ctrl}_TempAim_GRP"
-                aim_target = f"{ctrl}_Aim_TARGET"
-                target_keys = self.get_keyframe_times(aim_target) if cmds.objExists(aim_target) else []
+                self._bake_single_ctrl(ctrl, start_frame, end_frame, keys_only)
 
-                cmds.bakeResults(
-                    ctrl, time=(start_frame, end_frame),
-                    attribute=["rotateX", "rotateY", "rotateZ"],
-                    simulation=True, disableImplicitControl=True
-                )
-
-                if target_keys:
-                    for frame in range(start_frame, end_frame + 1):
-                        if frame not in target_keys:
-                            cmds.cutKey(ctrl, attribute=["rotateX", "rotateY", "rotateZ"], time=(frame, frame))
-
-                if cmds.objExists(grp_name):
-                    cmds.delete(grp_name)
-                if cmds.objExists(f"{ctrl}_TempAimConstraint"):
-                    cmds.delete(f"{ctrl}_TempAimConstraint")
-
-            # Final sweep of any remaining aim locators
-            leftovers = cmds.ls("*_Aim_TARGET*", "*_Up_VECTOR*", "*_Origin_LOC*", "*_Aim_LINE*", type="transform") or []
+            leftovers = cmds.ls("*_TempAim_GRP*", "*_Aim_TARGET*", "*_Up_VECTOR*", "*_Origin_LOC*", "*_Aim_LINE*", type="transform") or []
             if leftovers:
                 cmds.delete(leftovers)
 
+        mode_str = "Keyframes Only" if keys_only else "Every Frame"
+        cmds.inViewMessage(amg=f"Baked All Temp Aim ({mode_str}) for <hl>{len(ctrls_to_bake)}</hl> controller(s).", pos="topCenter", fade=True)
         return True
 
     def discard(self):

@@ -36,7 +36,6 @@ class ActionRegistry:
     # --- UNIVERSAL BAKE LOGIC ---
 
     def universal_bake_selected(self):
-        """Bakes selected Temp Aim, Temp Controls, or regular Rig controllers."""
         sel = cmds.ls(selection=True, type="transform") or []
         if not sel:
             cmds.warning("Please select a controller, Temp Control, or Aim Locator to bake!")
@@ -58,7 +57,6 @@ class ActionRegistry:
             cmds.warning("No temporary setups or animation found to bake on selected objects.")
 
     def universal_bake_all(self):
-        """Bakes and cleans ALL Temp Controls and ALL Temp Aim setups across the scene."""
         if hasattr(self.win, "temp_aim_engine"):
             try:
                 self.win.temp_aim_engine.bake_all()
@@ -95,6 +93,7 @@ class ActionRegistry:
         # Bake
         self.register("bake_selected", "Selected", self.universal_bake_selected, "Bake", "#43A047")
         self.register("temp_bake_all", "All", self.universal_bake_all, "Bake", "#2E7D32")
+        self.register("toggle_sampling", "Toggle: Keys / All", self.win.temp_ctrl_mgr.toggle_bake_mode, "Bake", "#FB8C00")
 
         # Direct Tools
         self.register("temp_offset_toggle", "Offset", self.win.temp_ctrl_mgr.toggle_offset_mode, "Direct", "#E65100")

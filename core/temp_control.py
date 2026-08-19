@@ -4,9 +4,10 @@ from DooAnimKit.core.context import UndoContext
 
 
 class TempControlManager:
-    """Universal manager for Temp Controls, Live Timeline Offset, and Clean Pivot Reparenting."""
+    """Universal manager for Temp Controls, Live Timeline Offset, and Smart Key Sampling."""
 
     BOOKMARK_NAME = "AnimKit_Offset_Bookmark"
+    BAKE_KEYS_ONLY = True  # Shared class-level toggle across the entire kit
 
     def __init__(self):
         self.session_data = {}        # {active_temp_loc: [target_ctrls]}
@@ -16,10 +17,55 @@ class TempControlManager:
         self.offset_active = False
         self._is_updating = False
 
+    @property
+    def bake_keys_only(self):
+        return TempControlManager.BAKE_KEYS_ONLY
+
+    @bake_keys_only.setter
+    def bake_keys_only(self, val):
+        TempControlManager.BAKE_KEYS_ONLY = bool(val)
+
     def _get_time_range(self):
         start_frame = int(cmds.playbackOptions(query=True, minTime=True))
         end_frame = int(cmds.playbackOptions(query=True, maxTime=True))
         return start_frame, end_frame
+
+    def get_existing_keyframes(self, nodes):
+        """Finds all unique keyframe times across specified nodes."""
+        if not isinstance(nodes, list):
+            nodes = [nodes]
+        frames = set()
+        for node in nodes:
+            if cmds.objExists(node):
+                keys = cmds.keyframe(node, query=True, timeChange=True) or []
+                for k in keys:
+                    frames.add(int(round(float(k))))
+        return sorted(list(frames))
+
+    def _filter_intermediate_keys(self, target_nodes, valid_frames):
+        """Removes dense baked keys if Keyframes Only mode is active."""
+        if not TempControlManager.BAKE_KEYS_ONLY or not valid_frames:
+            return
+        start_frame, end_frame = self._get_time_range()
+        valid_set = set(valid_frames)
+
+        if not isinstance(target_nodes, list):
+            target_nodes = [target_nodes]
+
+        for node in target_nodes:
+            if not cmds.objExists(node):
+                continue
+            all_keys = self.get_existing_keyframes(node)
+            for f in all_keys:
+                if f not in valid_set and start_frame <= f <= end_frame:
+                    cmds.cutKey(node, time=(f, f))
+
+    def toggle_bake_mode(self):
+        """Toggles between 'Keyframes Only' and 'Every Frame' globally."""
+        TempControlManager.BAKE_KEYS_ONLY = not TempControlManager.BAKE_KEYS_ONLY
+        mode_str = "Keyframes Only" if TempControlManager.BAKE_KEYS_ONLY else "Every Frame (All)"
+        cmds.inViewMessage(amg=f"Bake Sampling Mode: <hl>{mode_str}</hl>", pos="topCenter", fade=True)
+        return TempControlManager.BAKE_KEYS_ONLY
 
     def _create_wireframe_box(self, bounds, name="Group_Temp_CTRL"):
         xmin, ymin, zmin, xmax, ymax, zmax = bounds
@@ -151,6 +197,8 @@ class TempControlManager:
             return
 
         start_frame, end_frame = self._get_time_range()
+        src_keys = self.get_existing_keyframes(sel)
+
         with UndoContext("CreateSmartTemp"):
             if len(sel) == 1:
                 target_ctrl = sel[0]
@@ -172,8 +220,9 @@ class TempControlManager:
                     sampleBy=1, disableImplicitControl=True
                 )
                 cmds.delete(temp_const)
-                cmds.parentConstraint(loc, target_ctrl, maintainOffset=True)
+                self._filter_intermediate_keys(loc, src_keys)
 
+                cmds.parentConstraint(loc, target_ctrl, maintainOffset=True)
                 self.session_data[loc] = [target_ctrl]
                 cmds.select(loc)
             else:
@@ -198,6 +247,8 @@ class TempControlManager:
                         sampleBy=1, disableImplicitControl=True
                     )
                     cmds.delete(temp_const)
+                    self._filter_intermediate_keys(loc, self.get_existing_keyframes(ctrl))
+
                     cmds.parent(loc, master_ctrl)
                     cmds.parentConstraint(loc, ctrl, maintainOffset=True)
                     associated.append(ctrl)
@@ -210,7 +261,6 @@ class TempControlManager:
     # --- PIVOT LOCATOR WORKFLOW ---
 
     def create_pivot_locator(self):
-        """Spawns an interactive pivot locator at the selected Temp Control position."""
         sel = cmds.ls(selection=True, type="transform") or []
         if not sel:
             cmds.warning("Please select an active Temp Control to create a Pivot Locator!")
@@ -240,12 +290,7 @@ class TempControlManager:
         return True
 
     def apply_pivot_locator(self):
-        """
-        Transfers the animation to the new pivot position seamlessly by rebuilding
-        the Temp Control at the new location without offsets.
-        """
         sel = cmds.ls(selection=True, type="transform") or []
-
         piv_loc = None
         temp_ctrl = None
 
@@ -262,7 +307,6 @@ class TempControlManager:
             cmds.warning("No active Pivot Locator found in scene! Run 'Set Pivot Loc' first.")
             return False
 
-        # Збираємо справжні цільові контролери персонажа / кубика
         targets = self.session_data.get(temp_ctrl, [])
         if not targets:
             constraints = cmds.listRelatives(temp_ctrl, allDescendents=True, type="parentConstraint") or []
@@ -274,17 +318,17 @@ class TempControlManager:
             return False
 
         start_frame, end_frame = self._get_time_range()
+        src_keys = self.get_existing_keyframes(targets[0])
 
         with UndoContext("ApplyPivotLocator"):
-            # 1. Запікаємо чисту світову анімацію об'єкта на сам Pivot Locator
             bake_const = cmds.parentConstraint(targets[0], piv_loc, maintainOffset=True)
             cmds.bakeResults(
                 piv_loc, time=(start_frame, end_frame), simulation=True,
                 sampleBy=1, disableImplicitControl=True
             )
             cmds.delete(bake_const)
+            self._filter_intermediate_keys(piv_loc, src_keys)
 
-            # 2. Повністю видаляємо старий Temp Control та його констрейнти
             if cmds.objExists(temp_ctrl):
                 cmds.delete(temp_ctrl)
             if temp_ctrl in self.session_data:
@@ -295,12 +339,10 @@ class TempControlManager:
                 if old_consts:
                     cmds.delete(old_consts)
 
-            # 3. Перейменовуємо та перетворюємо Pivot Locator на новий повноцінний Temp Control
             new_temp_ctrl = cmds.rename(piv_loc, temp_ctrl)
             for s in cmds.listRelatives(new_temp_ctrl, shapes=True) or []:
                 cmds.setAttr(f"{s}.overrideColor", 18)
 
-            # 4. Прив'язуємо персонажа / кубик до нового Temp Control
             for t in targets:
                 cmds.parentConstraint(new_temp_ctrl, t, maintainOffset=True)
 
@@ -341,7 +383,6 @@ class TempControlManager:
             self._is_updating = False
 
     def bake_selected(self):
-        """Intelligently bakes only selected controls."""
         sel = cmds.ls(selection=True, type="transform")
         if not sel:
             cmds.warning("Please select a controller or Temp Rig element to bake!")
@@ -376,34 +417,32 @@ class TempControlManager:
                     if not found_temp_driver:
                         regular_ctrls_to_bake.add(item)
 
-            if targets_to_bake:
+            all_to_bake = list(targets_to_bake | regular_ctrls_to_bake)
+            if all_to_bake:
+                driver_keys = self.get_existing_keyframes(list(temp_nodes_to_delete) or all_to_bake)
+
                 cmds.bakeResults(
-                    list(targets_to_bake), time=(start_frame, end_frame), simulation=True,
+                    all_to_bake, time=(start_frame, end_frame), simulation=True,
                     sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=True
                 )
+                self._filter_intermediate_keys(all_to_bake, driver_keys)
+
                 for node in temp_nodes_to_delete:
                     if cmds.objExists(node):
                         cmds.delete(node)
                     if node in self.session_data:
                         del self.session_data[node]
 
-            if regular_ctrls_to_bake:
-                cmds.bakeResults(
-                    list(regular_ctrls_to_bake), time=(start_frame, end_frame), simulation=True,
-                    sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=True
-                )
-
-            total_baked = len(targets_to_bake | regular_ctrls_to_bake)
-            if total_baked > 0:
-                cmds.select(list(targets_to_bake | regular_ctrls_to_bake))
-                cmds.inViewMessage(amg=f"Baked <hl>{total_baked}</hl> selected controller(s).", pos="topCenter", fade=True)
+            if all_to_bake:
+                cmds.select(all_to_bake)
+                mode_str = "Keyframes Only" if TempControlManager.BAKE_KEYS_ONLY else "Every Frame"
+                cmds.inViewMessage(amg=f"Baked <hl>{len(all_to_bake)}</hl> controller(s) ({mode_str}).", pos="topCenter", fade=True)
                 return True
             else:
                 cmds.warning("No animation found to bake on selected objects.")
                 return False
 
     def bake_back_all(self):
-        """Bakes back and cleans all active temporary controls in the scene."""
         self.kill_script_jobs()
         self.set_offset_mode(False)
 
@@ -427,10 +466,12 @@ class TempControlManager:
 
             target_list = list(all_targets)
             if target_list:
+                driver_keys = self.get_existing_keyframes(active_masters or target_list)
                 cmds.bakeResults(
                     target_list, time=(start_frame, end_frame), simulation=True,
                     sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=True
                 )
+                self._filter_intermediate_keys(target_list, driver_keys)
 
             nodes_to_delete = cmds.ls("*_TEMP_CTRL*", "*_TEMP_LOC*", "*Group_Temp_CTRL*", "*_PIVOT_LOC*", type="transform")
             if nodes_to_delete:
@@ -440,4 +481,5 @@ class TempControlManager:
             self.base_curves_cache.clear()
             if target_list:
                 cmds.select(target_list)
-            cmds.inViewMessage(amg=f"Baked back and cleaned <hl>{len(target_list)}</hl> controller(s).", pos="topCenter", fade=True)
+            mode_str = "Keyframes Only" if TempControlManager.BAKE_KEYS_ONLY else "Every Frame"
+            cmds.inViewMessage(amg=f"Baked back and cleaned <hl>{len(target_list)}</hl> controller(s) ({mode_str}).", pos="topCenter", fade=True)

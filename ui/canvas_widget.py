@@ -191,7 +191,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
     def _get_btn_rect(self, btn, img_rect):
         bx = img_rect.x() + int(btn["u"] * img_rect.width())
         by = img_rect.y() + int(btn["v"] * img_rect.height())
-        return QtCore.QRect(bx, by, btn.get("w", 95), btn.get("h", 26))
+        return QtCore.QRect(bx, by, btn.get("w", 110), btn.get("h", 26))
 
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
@@ -215,16 +215,21 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             return
 
         is_offset_on = getattr(self.main_window.temp_ctrl_mgr, "offset_active", False)
+        bake_keys_only = getattr(self.main_window.temp_ctrl_mgr, "bake_keys_only", True)
 
         # Draw Buttons
         for btn in self.buttons:
             brect = self._get_btn_rect(btn, img_rect)
-            is_offset_btn = (btn.get("action_id") == "temp_offset_toggle")
+            action_id = btn.get("action_id")
 
-            if is_offset_btn and is_offset_on:
+            if action_id == "temp_offset_toggle" and is_offset_on:
                 bg_col = QtGui.QColor("#E65100")
                 border_pen = QtGui.QPen(QtGui.QColor("#FFCC80"), 2.5)
                 display_label = f"⏱ [ON] {btn.get('label', 'Offset')}"
+            elif action_id == "toggle_sampling":
+                bg_col = QtGui.QColor("#FB8C00") if bake_keys_only else QtGui.QColor("#455A64")
+                border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
+                display_label = "🎯 Keys Only" if bake_keys_only else "🎯 Every Frame"
             else:
                 bg_col = QtGui.QColor(btn.get("color", "#336699"))
                 border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
@@ -326,6 +331,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     else:
                         self.action_registry.execute(btn["action_id"])
                         self.main_window.sync_ui_state()
+                        self.update()
                     return
 
             # 2. Pins
@@ -399,7 +405,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             self.update()
 
     def _handle_action_trigger(self, act):
-        """Unified action trigger: Ctrl spawns button, normal click executes immediately."""
         ctrl_held = bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier)
         norm_u, norm_v = self.last_menu_pos_norm
 
@@ -413,7 +418,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     "action_id": act["id"],
                     "u": norm_u,
                     "v": norm_v,
-                    "w": max(90, len(label) * 8),
+                    "w": max(100, len(label) * 8),
                     "h": 26,
                     "color": act.get("color", "#336699")
                 })
@@ -422,6 +427,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         else:
             self.action_registry.execute(act["id"])
             self.main_window.sync_ui_state()
+            self.update()
 
     def _show_context_menu(self, pos, img_rect):
         norm_u = (pos.x() - img_rect.x()) / float(img_rect.width())
@@ -431,7 +437,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(self.MENU_STYLE)
 
-        # Check Pin Under Cursor
         clicked_pin = None
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
@@ -493,14 +498,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         for sub in categories_map.values():
             sub.setStyleSheet(self.MENU_STYLE)
 
-        # Populate Grouped Categories with direct bound callbacks
         for act in all_actions:
             cat = act.get("category")
             if cat in categories_map:
                 item = categories_map[cat].addAction(act["name"])
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
-        # Populate Direct Tools
         tools_menu.addSeparator()
         for direct_id, direct_title in [("temp_offset_toggle", "⏱ Offset"), ("trail_toggle", "🎨 Motion Trail")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
