@@ -8,6 +8,7 @@ except ImportError:
     from PySide2 import QtWidgets, QtGui, QtCore
 
 import maya.cmds as cmds
+import maya.mel as mel
 
 
 class SpatialActionCanvas(QtWidgets.QWidget):
@@ -177,6 +178,68 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             except Exception as e:
                 cmds.warning(f"Failed to load preset: {e}")
 
+    # --- AUTO HOTKEY REGISTRATION ---
+
+    def register_action_to_maya_hotkeys(self, action_id, label="Action"):
+        """Safely registers a Python RunTimeCommand & NameCommand, then opens Hotkey Editor."""
+        api_map = {
+            "temp_smart": "create_smart",
+            "temp_offset_toggle": "toggle_offset_mode",
+            "temp_aim_create": "create_temp_aim",
+            "temp_set_pivot": "create_pivot_locator",
+            "temp_bake_pivot": "apply_pivot_locator",
+            "copy_pose": "copy_pose",
+            "paste_pose": "paste_pose",
+            "mirror_pose": "mirror_pose",
+            "copy_anim": "copy_animation",
+            "paste_anim": "paste_animation",
+            "mirror_anim": "mirror_animation",
+            "bake_selected": "bake_selected",
+            "temp_bake_all": "bake_all",
+            "toggle_sampling": "toggle_bake_sampling",
+            "trail_toggle": "toggle_motion_trail",
+            "scan_rig": "scan_rig",
+            "default_pose": "reset_default_pose"
+        }
+
+        func_name = api_map.get(action_id, action_id)
+        cmd_name = f"DooAnim_{func_name}"
+        name_cmd_name = f"{cmd_name}NameCommand"
+        python_code = f"import DooAnimKit; DooAnimKit.api.{func_name}()"
+
+        # 1. Створюємо/перестворюємо RunTimeCommand
+        if cmds.runTimeCommand(cmd_name, exists=True):
+            cmds.runTimeCommand(cmd_name, edit=True, delete=True)
+
+        cmds.runTimeCommand(
+            cmd_name,
+            category="DooAnimKit",
+            commandLanguage="python",
+            command=python_code,
+            annotation=f"DooAnimKit: {label}"
+        )
+
+        # 2. Створюємо NameCommand для Hotkey Editor
+        cmds.nameCommand(
+            name_cmd_name,
+            annotation=f"DooAnimKit: {label}",
+            command=cmd_name
+        )
+
+        # 3. Безпечно відкриваємо Hotkey Editor через штатну команду
+        try:
+            mel.eval("HotkeyPreferencesWindow;")
+        except Exception:
+            try:
+                mel.eval("hotkeyEditor;")
+            except Exception as e:
+                cmds.warning(f"Could not open Hotkey Editor automatically: {e}")
+
+        cmds.inViewMessage(
+            amg=f"Command <hl>{cmd_name}</hl> ready! Assign key in Category: <hl>'DooAnimKit'</hl>.",
+            pos="topCenter", fade=True
+        )
+
     def _get_image_rect(self):
         if not self.pixmap or self.pixmap.isNull():
             return QtCore.QRect()
@@ -208,7 +271,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 "2. Click 'Paste Screenshot'\n"
                 "3. RMB: Tools / Add Pin / Save / Open\n"
                 "4. Menu click: Run Action | Ctrl + Menu Click: Spawn Button\n"
-                "5. Ctrl + Left Drag: Move Buttons / Pins"
+                "5. Ctrl + Left Drag: Move Buttons / Pins\n"
+                "6. RMB on Button: Save to Hotkeys / Delete"
             )
 
         if img_rect.isEmpty():
@@ -321,7 +385,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             return
 
         if event.button() == QtCore.Qt.LeftButton:
-            # 1. Action Buttons
             for btn in reversed(self.buttons):
                 brect = self._get_btn_rect(btn, img_rect)
                 if brect.contains(event.pos()):
@@ -334,7 +397,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                         self.update()
                     return
 
-            # 2. Pins
             for pin in reversed(self.pins):
                 px = img_rect.x() + int(pin["u"] * img_rect.width())
                 py = img_rect.y() + int(pin["v"] * img_rect.height())
@@ -348,7 +410,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                             cmds.select(pin["name"], add=add_mode)
                     return
 
-            # 3. Canvas Selection Box
             self.is_box_selecting = True
             self.box_start = event.pos()
             self.box_current = event.pos()
@@ -437,6 +498,31 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(self.MENU_STYLE)
 
+        # 1. Check Button Under Cursor
+        clicked_btn = None
+        for btn in reversed(self.buttons):
+            if self._get_btn_rect(btn, img_rect).contains(pos):
+                clicked_btn = btn
+                break
+
+        if clicked_btn:
+            menu.addSection(f"Button: {clicked_btn.get('label', 'Action')}")
+            action_save_hotkey = menu.addAction("⌨️ Save to Hotkeys...")
+            menu.addSeparator()
+            action_delete_btn = menu.addAction("🗑 Delete Button")
+
+            chosen = menu.exec_(self.mapToGlobal(pos))
+            if chosen == action_save_hotkey:
+                self.register_action_to_maya_hotkeys(
+                    clicked_btn.get("action_id"), clicked_btn.get("label")
+                )
+            elif chosen == action_delete_btn:
+                self.buttons.remove(clicked_btn)
+                self.save_state()
+                self.update()
+            return
+
+        # 2. Check Pin Under Cursor
         clicked_pin = None
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
@@ -479,11 +565,10 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # 1. Add Pin
+        # 3. Canvas General Context Menu
         action_add_pin = menu.addAction("📍 Add Pin")
         menu.addSeparator()
 
-        # 2. Structured Tools Submenu
         tools_menu = menu.addMenu("🛠 Tools")
         tools_menu.setStyleSheet(self.MENU_STYLE)
         all_actions = self.action_registry.get_action_list()
@@ -518,23 +603,9 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 item = tools_menu.addAction(direct_title)
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
-        # 3. Presets
         menu.addSeparator()
         action_save_preset = menu.addAction("💾 Save Preset")
         action_open_preset = menu.addAction("📂 Open Preset")
-
-        # 4. Check Button Under Cursor for deletion
-        del_target_btn = None
-        for btn in self.buttons:
-            if self._get_btn_rect(btn, img_rect).contains(pos):
-                del_target_btn = btn
-                break
-
-        if del_target_btn:
-            menu.addSeparator()
-            action_delete = menu.addAction("🗑 Delete Button Under Cursor")
-        else:
-            action_delete = None
 
         chosen = menu.exec_(self.mapToGlobal(pos))
 
@@ -552,9 +623,3 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
         elif chosen == action_open_preset:
             self.open_preset_from_file()
-
-        elif chosen == action_delete:
-            if del_target_btn and del_target_btn in self.buttons:
-                self.buttons.remove(del_target_btn)
-            self.save_state()
-            self.update()
