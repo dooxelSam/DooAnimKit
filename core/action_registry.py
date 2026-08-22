@@ -1,6 +1,6 @@
 """
 Action Registry for DooAnimKit.
-Maintains action database, connects UI widgets, and handles universal bake & pivot logic.
+Maintains action database, connects UI widgets, and handles universal bake, pivot & tween logic.
 """
 
 import maya.cmds as cmds
@@ -23,7 +23,6 @@ class ActionRegistry:
         }
 
     def open_temp_aim_window(self):
-        """Creates setup preview and opens floating dialog."""
         if hasattr(self.win, "temp_aim_engine") and self.win.temp_aim_engine.create_setup():
             if hasattr(self.win, "aim_window") and self.win.aim_window is not None:
                 try:
@@ -33,8 +32,6 @@ class ActionRegistry:
             self.win.aim_window = ViewportAimHUD(self.win.temp_aim_engine, parent=self.win)
             self.win.aim_window.show()
 
-    # --- UNIVERSAL BAKE LOGIC ---
-
     def universal_bake_selected(self):
         sel = cmds.ls(selection=True, type="transform") or []
         if not sel:
@@ -42,7 +39,6 @@ class ActionRegistry:
             return
 
         baked_any = False
-
         if hasattr(self.win, "temp_aim_engine"):
             aim_result = self.win.temp_aim_engine.bake_selected(sel)
             if aim_result:
@@ -71,9 +67,12 @@ class ActionRegistry:
 
         cmds.inViewMessage(amg="<hl>Bake All</hl>: All Aim & Temp Controls baked & scene cleaned.", pos="topCenter", fade=True)
 
-    # --- ACTIONS CATALOG ---
-
     def _register_default_actions(self):
+        # Tween (5% Nudge)
+        self.register("tween_step_left", "Tween Left (-5%)", lambda: self.win.tween_engine.step_nudge(-1, 5.0), "Tween", "#EC407A")
+        self.register("tween_step_right", "Tween Right (+5%)", lambda: self.win.tween_engine.step_nudge(1, 5.0), "Tween", "#AB47BC")
+        self.register("tween_mid_50", "Tween 50% (Breakdown)", lambda: self.win.tween_engine.tween_absolute(50.0), "Tween", "#8E24AA")
+
         # Temp Controls
         self.register("temp_smart", "Smart", self.win.temp_ctrl_mgr.create_smart, "Temp Controls", "#1976D2")
         self.register("temp_aim_create", "Aim", self.open_temp_aim_window, "Temp Controls", "#00BCD4")

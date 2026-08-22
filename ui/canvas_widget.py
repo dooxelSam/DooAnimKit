@@ -181,8 +181,10 @@ class SpatialActionCanvas(QtWidgets.QWidget):
     # --- AUTO HOTKEY REGISTRATION ---
 
     def register_action_to_maya_hotkeys(self, action_id, label="Action"):
-        """Safely registers a Python RunTimeCommand & NameCommand, then opens Hotkey Editor."""
         api_map = {
+            "tween_step_left": "tween_step_left",
+            "tween_step_right": "tween_step_right",
+            "tween_mid_50": "tween_breakdown_50",
             "temp_smart": "create_smart",
             "temp_offset_toggle": "toggle_offset_mode",
             "temp_aim_create": "create_temp_aim",
@@ -207,7 +209,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         name_cmd_name = f"{cmd_name}NameCommand"
         python_code = f"import DooAnimKit; DooAnimKit.api.{func_name}()"
 
-        # 1. Створюємо/перестворюємо RunTimeCommand
         if cmds.runTimeCommand(cmd_name, exists=True):
             cmds.runTimeCommand(cmd_name, edit=True, delete=True)
 
@@ -219,14 +220,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             annotation=f"DooAnimKit: {label}"
         )
 
-        # 2. Створюємо NameCommand для Hotkey Editor
         cmds.nameCommand(
             name_cmd_name,
             annotation=f"DooAnimKit: {label}",
             command=cmd_name
         )
 
-        # 3. Безпечно відкриваємо Hotkey Editor через штатну команду
         try:
             mel.eval("HotkeyPreferencesWindow;")
         except Exception:
@@ -574,6 +573,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         all_actions = self.action_registry.get_action_list()
 
         categories_map = {
+            "Tween": tools_menu.addMenu("⚖️ Tween"),
             "Temp Controls": tools_menu.addMenu("⚡ Temp Controls"),
             "Pose": tools_menu.addMenu("🧘 Pose"),
             "Animation": tools_menu.addMenu("🎬 Animation"),

@@ -23,7 +23,25 @@ def _get_engine(engine_name):
         elif engine_name == "trail_mgr":
             from DooAnimKit.core.motion_trail import MotionTrailManager
             _global_instances[engine_name] = MotionTrailManager()
+        elif engine_name == "tween_engine":
+            from DooAnimKit.core.tween_engine import TweenEngine
+            _global_instances[engine_name] = TweenEngine()
     return _global_instances[engine_name]
+
+
+# --- TWEEN ENGINE (HOTKEYS) ---
+
+def tween_step_left():
+    """Nudges keyframe -5% towards previous neighbor."""
+    _get_engine("tween_engine").step_nudge(direction=-1, step_percent=5.0)
+
+def tween_step_right():
+    """Nudges keyframe +5% towards next neighbor."""
+    _get_engine("tween_engine").step_nudge(direction=1, step_percent=5.0)
+
+def tween_breakdown_50():
+    """Snaps to exact 50% midpoint breakdown."""
+    _get_engine("tween_engine").tween_absolute(percentage=50.0)
 
 
 # --- TEMP CONTROLS & AIM ---
