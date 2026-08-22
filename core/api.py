@@ -26,7 +26,17 @@ def _get_engine(engine_name):
         elif engine_name == "tween_engine":
             from DooAnimKit.core.tween_engine import TweenEngine
             _global_instances[engine_name] = TweenEngine()
+        elif engine_name == "euler_filter":
+            from DooAnimKit.core.euler_filter import SmartEulerFilter
+            _global_instances[engine_name] = SmartEulerFilter()
     return _global_instances[engine_name]
+
+
+# --- SMART EULER FILTER ---
+
+def apply_smart_euler():
+    """Applies Quaternion-based Smart Euler Filter to resolve Gimbal Lock flips."""
+    _get_engine("euler_filter").apply_smart_filter()
 
 
 # --- TWEEN & SNAP ENGINE (HOTKEYS) ---

@@ -1,6 +1,6 @@
 """
 Action Registry for DooAnimKit.
-Maintains action database, connects UI widgets, and handles universal bake, pivot & tween logic.
+Maintains action database, connects UI widgets, and handles universal bake, pivot, tween & euler filter logic.
 """
 
 import maya.cmds as cmds
@@ -68,7 +68,10 @@ class ActionRegistry:
         cmds.inViewMessage(amg="<hl>Bake All</hl>: All Aim & Temp Controls baked & scene cleaned.", pos="topCenter", fade=True)
 
     def _register_default_actions(self):
-        # Tween (Nudge & Instant Snap)
+        # Tools & Filters
+        self.register("smart_euler", "Smart Euler", self.win.euler_filter.apply_smart_filter, "Direct", "#00ACC1")
+
+        # Tween
         self.register("tween_step_left", "Tween Left (-5%)", lambda: self.win.tween_engine.step_nudge(-1, 5.0), "Tween", "#EC407A")
         self.register("tween_step_right", "Tween Right (+5%)", lambda: self.win.tween_engine.step_nudge(1, 5.0), "Tween", "#AB47BC")
         self.register("tween_snap_left", "Snap Left (100%)", lambda: self.win.tween_engine.snap_to_neighbor(-1), "Tween", "#D81B60")

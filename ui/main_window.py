@@ -10,6 +10,7 @@ from DooAnimKit.core.mirror import PoseMirrorEngine
 from DooAnimKit.core.temp_aim import TempAimEngine
 from DooAnimKit.core.motion_trail import MotionTrailManager
 from DooAnimKit.core.tween_engine import TweenEngine
+from DooAnimKit.core.euler_filter import SmartEulerFilter
 from DooAnimKit.core.action_registry import ActionRegistry
 from DooAnimKit.ui.canvas_widget import SpatialActionCanvas
 
@@ -30,6 +31,7 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         self.pose_mirror_engine = PoseMirrorEngine()
         self.trail_mgr = MotionTrailManager()
         self.tween_engine = TweenEngine()
+        self.euler_filter = SmartEulerFilter()
 
         # Action Registry
         self.action_registry = ActionRegistry(self)

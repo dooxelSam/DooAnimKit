@@ -119,14 +119,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     data = json.load(f)
                     self.pins = data.get("pins", [])
                     self.buttons = data.get("buttons", [])
-                    # Auto recalculate compact width on loaded buttons
                     for b in self.buttons:
                         b["w"] = self._calc_button_width(b.get("label", "Action"))
             except Exception:
                 self.pins, self.buttons = [], []
 
     def _calc_button_width(self, text):
-        """Calculates precise compact pixel width for buttons based on text."""
         font = QtGui.QFont()
         font.setPointSize(8)
         font.setBold(True)
@@ -196,6 +194,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
     def register_action_to_maya_hotkeys(self, action_id, label="Action"):
         api_map = {
+            "smart_euler": "apply_smart_euler",
             "tween_step_left": "tween_step_left",
             "tween_step_right": "tween_step_right",
             "tween_snap_left": "tween_snap_left",
@@ -514,7 +513,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(self.MENU_STYLE)
 
-        # 1. Check Button Under Cursor
         clicked_btn = None
         for btn in reversed(self.buttons):
             if self._get_btn_rect(btn, img_rect).contains(pos):
@@ -567,7 +565,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # 2. Check Pin Under Cursor
         clicked_pin = None
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
@@ -610,7 +607,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # 3. Canvas General Context Menu
+        # Canvas General Context Menu
         action_add_pin = menu.addAction("📍 Add Pin")
         menu.addSeparator()
 
@@ -636,7 +633,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         tools_menu.addSeparator()
-        for direct_id, direct_title in [("temp_offset_toggle", "⏱ Offset"), ("trail_toggle", "🎨 Motion Trail")]:
+        for direct_id, direct_title in [("smart_euler", "💫 Smart Euler"), ("temp_offset_toggle", "⏱ Offset"), ("trail_toggle", "🎨 Motion Trail")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
