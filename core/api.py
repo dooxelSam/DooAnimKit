@@ -29,7 +29,7 @@ def _get_engine(engine_name):
     return _global_instances[engine_name]
 
 
-# --- TWEEN ENGINE (HOTKEYS) ---
+# --- TWEEN & SNAP ENGINE (HOTKEYS) ---
 
 def tween_step_left():
     """Nudges keyframe -5% towards previous neighbor."""
@@ -38,6 +38,14 @@ def tween_step_left():
 def tween_step_right():
     """Nudges keyframe +5% towards next neighbor."""
     _get_engine("tween_engine").step_nudge(direction=1, step_percent=5.0)
+
+def tween_snap_left():
+    """Instantly matches 100% pose of the previous keyframe (Hold Left)."""
+    _get_engine("tween_engine").snap_to_neighbor(direction=-1)
+
+def tween_snap_right():
+    """Instantly matches 100% pose of the next keyframe (Hold Right)."""
+    _get_engine("tween_engine").snap_to_neighbor(direction=1)
 
 def tween_breakdown_50():
     """Snaps to exact 50% midpoint breakdown."""

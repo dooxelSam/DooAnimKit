@@ -184,6 +184,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         api_map = {
             "tween_step_left": "tween_step_left",
             "tween_step_right": "tween_step_right",
+            "tween_snap_left": "tween_snap_left",
+            "tween_snap_right": "tween_snap_right",
             "tween_mid_50": "tween_breakdown_50",
             "temp_smart": "create_smart",
             "temp_offset_toggle": "toggle_offset_mode",
@@ -497,7 +499,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(self.MENU_STYLE)
 
-        # 1. Check Button Under Cursor
         clicked_btn = None
         for btn in reversed(self.buttons):
             if self._get_btn_rect(btn, img_rect).contains(pos):
@@ -521,7 +522,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # 2. Check Pin Under Cursor
         clicked_pin = None
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
@@ -564,7 +564,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # 3. Canvas General Context Menu
+        # Canvas General Context Menu
         action_add_pin = menu.addAction("📍 Add Pin")
         menu.addSeparator()
 

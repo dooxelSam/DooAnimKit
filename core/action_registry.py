@@ -68,10 +68,12 @@ class ActionRegistry:
         cmds.inViewMessage(amg="<hl>Bake All</hl>: All Aim & Temp Controls baked & scene cleaned.", pos="topCenter", fade=True)
 
     def _register_default_actions(self):
-        # Tween (5% Nudge)
+        # Tween (Nudge & Instant Snap)
         self.register("tween_step_left", "Tween Left (-5%)", lambda: self.win.tween_engine.step_nudge(-1, 5.0), "Tween", "#EC407A")
         self.register("tween_step_right", "Tween Right (+5%)", lambda: self.win.tween_engine.step_nudge(1, 5.0), "Tween", "#AB47BC")
-        self.register("tween_mid_50", "Tween 50% (Breakdown)", lambda: self.win.tween_engine.tween_absolute(50.0), "Tween", "#8E24AA")
+        self.register("tween_snap_left", "Snap Left (100%)", lambda: self.win.tween_engine.snap_to_neighbor(-1), "Tween", "#D81B60")
+        self.register("tween_snap_right", "Snap Right (100%)", lambda: self.win.tween_engine.snap_to_neighbor(1), "Tween", "#8E24AA")
+        self.register("tween_mid_50", "Tween 50% (Breakdown)", lambda: self.win.tween_engine.tween_absolute(50.0), "Tween", "#6A1B9A")
 
         # Temp Controls
         self.register("temp_smart", "Smart", self.win.temp_ctrl_mgr.create_smart, "Temp Controls", "#1976D2")

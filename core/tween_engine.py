@@ -3,7 +3,7 @@ from DooAnimKit.core.context import UndoContext
 
 
 class TweenEngine:
-    """AnimBot-style keyframe tweening engine with continuous percentage accumulation."""
+    """AnimBot-style keyframe tweening engine with incremental nudging and instant snap to neighbors."""
 
     CHANNELS = [
         "translateX", "translateY", "translateZ",
@@ -45,7 +45,6 @@ class TweenEngine:
                     if cmds.getAttr(full_attr, lock=True):
                         continue
 
-                    # Знаходимо сусідні ключі
                     prev_keys = cmds.keyframe(full_attr, query=True, time=(None, current_frame - 0.001), timeChange=True) or []
                     next_keys = cmds.keyframe(full_attr, query=True, time=(current_frame + 0.001, None), timeChange=True) or []
 
@@ -58,9 +57,7 @@ class TweenEngine:
                     prev_val = cmds.keyframe(full_attr, query=True, time=(prev_time, prev_time), valueChange=True)[0]
                     next_val = cmds.keyframe(full_attr, query=True, time=(next_time, next_time), valueChange=True)[0]
 
-                    # Перевіряємо, чи є вже ключ на поточному кадрі
                     has_key = bool(cmds.keyframe(full_attr, query=True, time=(current_frame, current_frame), keyframeCount=True))
-
                     if has_key:
                         curr_val = cmds.keyframe(full_attr, query=True, time=(current_frame, current_frame), valueChange=True)[0]
                     else:
@@ -68,13 +65,11 @@ class TweenEngine:
 
                     val_range = next_val - prev_val
 
-                    # Якщо сусіди різні за значенням — розраховуємо поточний фактор і додаємо крок
                     if abs(val_range) > 1e-5:
                         current_factor = (curr_val - prev_val) / val_range
                         new_factor = current_factor + step
                         new_val = prev_val + val_range * new_factor
                     else:
-                        # Якщо сусіди однакові (наприклад, по нулях), беремо пряме значення
                         new_val = curr_val
 
                     cmds.setKeyframe(full_attr, time=current_frame, value=new_val)
@@ -83,6 +78,52 @@ class TweenEngine:
         if applied_any:
             dir_str = "Left (-5%)" if direction < 0 else "Right (+5%)"
             cmds.inViewMessage(amg=f"Tween Nudge: <hl>{dir_str}</hl>", pos="topCenter", fade=True)
+        return applied_any
+
+    def snap_to_neighbor(self, direction=-1):
+        """
+        Instantly snaps and matches 100% of the neighbor pose at the current frame.
+        direction = -1 -> 100% Left (Previous Key)
+        direction = +1 -> 100% Right (Next Key)
+        """
+        targets = self._get_target_objects()
+        if not targets:
+            cmds.warning("Please select at least one controller!")
+            return False
+
+        current_frame = cmds.currentTime(query=True)
+        applied_any = False
+
+        with UndoContext("SnapToNeighbor"):
+            for node in targets:
+                if not cmds.objExists(node):
+                    continue
+
+                for attr in self.CHANNELS:
+                    full_attr = f"{node}.{attr}"
+                    if not cmds.attributeQuery(attr, node=node, exists=True):
+                        continue
+                    if cmds.getAttr(full_attr, lock=True):
+                        continue
+
+                    if direction < 0:
+                        keys = cmds.keyframe(full_attr, query=True, time=(None, current_frame - 0.001), timeChange=True) or []
+                        if not keys:
+                            continue
+                        target_time = keys[-1]
+                    else:
+                        keys = cmds.keyframe(full_attr, query=True, time=(current_frame + 0.001, None), timeChange=True) or []
+                        if not keys:
+                            continue
+                        target_time = keys[0]
+
+                    target_val = cmds.keyframe(full_attr, query=True, time=(target_time, target_time), valueChange=True)[0]
+                    cmds.setKeyframe(full_attr, time=current_frame, value=target_val)
+                    applied_any = True
+
+        if applied_any:
+            side_str = "Left (Previous Key)" if direction < 0 else "Right (Next Key)"
+            cmds.inViewMessage(amg=f"Snapped 100% to <hl>{side_str}</hl>", pos="topCenter", fade=True)
         return applied_any
 
     def tween_absolute(self, percentage=50.0):
