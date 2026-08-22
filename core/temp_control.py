@@ -2,16 +2,41 @@ import maya.cmds as cmds
 import maya.mel as mel
 from DooAnimKit.core.context import UndoContext
 
+try:
+    from PySide6 import QtWidgets
+except ImportError:
+    from PySide2 import QtWidgets
+
+import maya.OpenMayaUI as omui
+try:
+    from shiboken6 import wrapInstance
+except ImportError:
+    try:
+        from shiboken2 import wrapInstance
+    except ImportError:
+        from sip import wrapinstance as wrapInstance
+
+
+def get_actual_timeline_track():
+    """Finds strictly the inner Time Slider track widget without painting transport controls."""
+    # Look for the internal time slider widget
+    ptr = omui.MQtUtil.findControl("timeControl1")
+    if not ptr:
+        ptr = omui.MQtUtil.findControl("TimeSlider")
+    if ptr:
+        w = wrapInstance(int(ptr), QtWidgets.QWidget)
+        return w
+    return None
+
 
 class TempControlManager:
     """Universal manager for Temp Controls, Live Timeline Offset, and Smart Key Sampling."""
 
-    BOOKMARK_NAME = "AnimKit_Offset_Bookmark"
-    BAKE_KEYS_ONLY = True  # Shared class-level toggle across the entire kit
+    BAKE_KEYS_ONLY = True
 
     def __init__(self):
-        self.session_data = {}        # {active_temp_loc: [target_ctrls]}
-        self.base_curves_cache = {}   # {node: {attr: {frame: val}}}
+        self.session_data = {}
+        self.base_curves_cache = {}
         self.script_jobs = []
         self.attr_jobs = []
         self.offset_active = False
@@ -31,7 +56,6 @@ class TempControlManager:
         return start_frame, end_frame
 
     def get_existing_keyframes(self, nodes):
-        """Finds all unique keyframe times across specified nodes."""
         if not isinstance(nodes, list):
             nodes = [nodes]
         frames = set()
@@ -43,7 +67,6 @@ class TempControlManager:
         return sorted(list(frames))
 
     def _filter_intermediate_keys(self, target_nodes, valid_frames):
-        """Removes dense baked keys if Keyframes Only mode is active."""
         if not TempControlManager.BAKE_KEYS_ONLY or not valid_frames:
             return
         start_frame, end_frame = self._get_time_range()
@@ -61,7 +84,6 @@ class TempControlManager:
                     cmds.cutKey(node, time=(f, f))
 
     def toggle_bake_mode(self):
-        """Toggles between 'Keyframes Only' and 'Every Frame' globally."""
         TempControlManager.BAKE_KEYS_ONLY = not TempControlManager.BAKE_KEYS_ONLY
         mode_str = "Keyframes Only" if TempControlManager.BAKE_KEYS_ONLY else "Every Frame (All)"
         cmds.inViewMessage(amg=f"Bake Sampling Mode: <hl>{mode_str}</hl>", pos="topCenter", fade=True)
@@ -117,27 +139,33 @@ class TempControlManager:
 
     def set_offset_mode(self, active=True):
         self.offset_active = active
-        if cmds.objExists(self.BOOKMARK_NAME):
-            cmds.delete(self.BOOKMARK_NAME)
+        track_widget = get_actual_timeline_track()
 
         if active:
-            start_frame, end_frame = self._get_time_range()
-            try:
-                cmds.timeSliderBookmark(
-                    name=self.BOOKMARK_NAME,
-                    start=start_frame,
-                    stop=end_frame,
-                    color=[0.9, 0.35, 0.1],
-                    annotation="OFFSET MODE ACTIVE"
-                )
-            except Exception:
-                pass
+            # Elegant glowing green outline and subtle translucent backdrop
+            if track_widget:
+                track_widget.setStyleSheet("""
+                    QWidget {
+                        background-color: rgba(30, 90, 45, 110);
+                        border-top: 2px solid #00E676;
+                        border-bottom: 2px solid #00E676;
+                        border-left: 2px solid #00E676;
+                        border-right: 2px solid #00E676;
+                        border-radius: 4px;
+                    }
+                """)
+
             self.register_script_jobs()
             self._on_selection_or_time_changed()
             cmds.inViewMessage(amg="<hl>TIMELINE OFFSET: ON</hl>", pos="topCenter", fade=True)
         else:
             self.kill_script_jobs()
             self.base_curves_cache.clear()
+
+            # Clean styling back to standard Maya look
+            if track_widget:
+                track_widget.setStyleSheet("")
+
             cmds.inViewMessage(amg="TIMELINE OFFSET: OFF", pos="topCenter", fade=True)
 
     def toggle_offset_mode(self):
