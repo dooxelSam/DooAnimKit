@@ -12,7 +12,7 @@ import maya.mel as mel
 
 
 class SpatialActionCanvas(QtWidgets.QWidget):
-    """Interactive canvas with background character screenshot, customizable pins, and movable action buttons."""
+    """Interactive canvas with background character screenshot, customizable pins, and dynamic compact buttons."""
 
     PIN_RADIUS = 9
 
@@ -119,8 +119,20 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     data = json.load(f)
                     self.pins = data.get("pins", [])
                     self.buttons = data.get("buttons", [])
+                    # Auto recalculate compact width on loaded buttons
+                    for b in self.buttons:
+                        b["w"] = self._calc_button_width(b.get("label", "Action"))
             except Exception:
                 self.pins, self.buttons = [], []
+
+    def _calc_button_width(self, text):
+        """Calculates precise compact pixel width for buttons based on text."""
+        font = QtGui.QFont()
+        font.setPointSize(8)
+        font.setBold(True)
+        metrics = QtGui.QFontMetrics(font)
+        text_w = metrics.horizontalAdvance(text) if hasattr(metrics, 'horizontalAdvance') else metrics.width(text)
+        return max(36, text_w + 14)
 
     def paste_image_from_clipboard(self):
         cb = QtWidgets.QApplication.clipboard()
@@ -170,6 +182,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     data = json.load(f)
                     self.pins = data.get("pins", [])
                     self.buttons = data.get("buttons", [])
+                    for b in self.buttons:
+                        b["w"] = self._calc_button_width(b.get("label", "Action"))
                 img_file = file_path.replace(".json", "_img.png")
                 self.pixmap = QtGui.QPixmap(img_file) if os.path.exists(img_file) else None
                 self.save_state()
@@ -255,7 +269,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
     def _get_btn_rect(self, btn, img_rect):
         bx = img_rect.x() + int(btn["u"] * img_rect.width())
         by = img_rect.y() + int(btn["v"] * img_rect.height())
-        return QtCore.QRect(bx, by, btn.get("w", 110), btn.get("h", 26))
+        bw = btn.get("w", self._calc_button_width(btn.get("label", "Action")))
+        return QtCore.QRect(bx, by, bw, btn.get("h", 24))
 
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
@@ -273,7 +288,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 "3. RMB: Tools / Add Pin / Save / Open\n"
                 "4. Menu click: Run Action | Ctrl + Menu Click: Spawn Button\n"
                 "5. Ctrl + Left Drag: Move Buttons / Pins\n"
-                "6. RMB on Button: Save to Hotkeys / Delete"
+                "6. RMB on Button: Rename / Color / Hotkeys / Delete"
             )
 
         if img_rect.isEmpty():
@@ -289,12 +304,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
             if action_id == "temp_offset_toggle" and is_offset_on:
                 bg_col = QtGui.QColor("#E65100")
-                border_pen = QtGui.QPen(QtGui.QColor("#FFCC80"), 2.5)
+                border_pen = QtGui.QPen(QtGui.QColor("#FFCC80"), 2.0)
                 display_label = f"⏱ [ON] {btn.get('label', 'Offset')}"
             elif action_id == "toggle_sampling":
                 bg_col = QtGui.QColor("#FB8C00") if bake_keys_only else QtGui.QColor("#455A64")
                 border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
-                display_label = "🎯 Keys Only" if bake_keys_only else "🎯 Every Frame"
+                display_label = "🎯 Keys" if bake_keys_only else "🎯 All"
             else:
                 bg_col = QtGui.QColor(btn.get("color", "#336699"))
                 border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
@@ -302,7 +317,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
             painter.setBrush(QtGui.QBrush(bg_col))
             painter.setPen(border_pen)
-            painter.drawRoundedRect(brect, 5, 5)
+            painter.drawRoundedRect(brect, 4, 4)
 
             painter.setPen(QtCore.Qt.white)
             font = painter.font()
@@ -480,8 +495,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     "action_id": act["id"],
                     "u": norm_u,
                     "v": norm_v,
-                    "w": max(100, len(label) * 8),
-                    "h": 26,
+                    "w": self._calc_button_width(label),
+                    "h": 24,
                     "color": act.get("color", "#336699")
                 })
                 self.save_state()
@@ -499,6 +514,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(self.MENU_STYLE)
 
+        # 1. Check Button Under Cursor
         clicked_btn = None
         for btn in reversed(self.buttons):
             if self._get_btn_rect(btn, img_rect).contains(pos):
@@ -507,12 +523,41 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
         if clicked_btn:
             menu.addSection(f"Button: {clicked_btn.get('label', 'Action')}")
+            action_rename_btn = menu.addAction("✏️ Rename Button...")
+            action_color_btn = menu.addAction("🎨 Pick Custom Color...")
+            action_reset_color_btn = menu.addAction("🔄 Reset Default Color")
+            menu.addSeparator()
             action_save_hotkey = menu.addAction("⌨️ Save to Hotkeys...")
             menu.addSeparator()
             action_delete_btn = menu.addAction("🗑 Delete Button")
 
             chosen = menu.exec_(self.mapToGlobal(pos))
-            if chosen == action_save_hotkey:
+            if chosen == action_rename_btn:
+                new_label, ok = QtWidgets.QInputDialog.getText(
+                    self, "Rename Button", "Enter new button label:", text=clicked_btn.get("label", "")
+                )
+                if ok and new_label:
+                    clicked_btn["label"] = new_label
+                    clicked_btn["w"] = self._calc_button_width(new_label)
+                    self.save_state()
+                    self.update()
+            elif chosen == action_color_btn:
+                current_color = clicked_btn.get("color", "#336699")
+                col = QtWidgets.QColorDialog.getColor(QtGui.QColor(current_color), self, "Select Button Color")
+                if col.isValid():
+                    clicked_btn["color"] = col.name()
+                    self.save_state()
+                    self.update()
+            elif chosen == action_reset_color_btn:
+                all_actions = self.action_registry.get_action_list()
+                original_act = next((a for a in all_actions if a["id"] == clicked_btn.get("action_id")), None)
+                if original_act:
+                    clicked_btn["color"] = original_act.get("color", "#336699")
+                else:
+                    clicked_btn["color"] = "#336699"
+                self.save_state()
+                self.update()
+            elif chosen == action_save_hotkey:
                 self.register_action_to_maya_hotkeys(
                     clicked_btn.get("action_id"), clicked_btn.get("label")
                 )
@@ -522,6 +567,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
+        # 2. Check Pin Under Cursor
         clicked_pin = None
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
@@ -564,7 +610,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # Canvas General Context Menu
+        # 3. Canvas General Context Menu
         action_add_pin = menu.addAction("📍 Add Pin")
         menu.addSeparator()
 
