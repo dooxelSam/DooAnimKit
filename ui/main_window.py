@@ -12,6 +12,7 @@ from DooAnimKit.core.temp_ik import TempIKManager
 from DooAnimKit.core.motion_trail import MotionTrailManager
 from DooAnimKit.core.tween_engine import TweenEngine
 from DooAnimKit.core.euler_filter import SmartEulerFilter
+from DooAnimKit.core.time_shift import TimeShiftEngine
 from DooAnimKit.core.action_registry import ActionRegistry
 from DooAnimKit.ui.canvas_widget import SpatialActionCanvas
 
@@ -26,7 +27,7 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         self.setObjectName(self.UI_NAME)
         self.setWindowTitle("DooAnimKit — Spatial Hub")
 
-        # Engines
+        # Core Engines
         self.temp_ctrl_mgr = TempControlManager()
         self.pose_mirror_engine = PoseMirrorEngine()
         self.temp_aim_engine = TempAimEngine()
@@ -34,12 +35,12 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         self.trail_mgr = MotionTrailManager()
         self.tween_engine = TweenEngine()
         self.euler_filter = SmartEulerFilter()
+        self.time_shift_engine = TimeShiftEngine()
 
         # Action Registry & HUD Reference
         self.action_registry = ActionRegistry(self)
         self.aim_window = None
 
-        self._is_resizing = False
         self._build_ui()
 
     def _build_ui(self):

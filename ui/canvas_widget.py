@@ -12,10 +12,7 @@ import maya.mel as mel
 
 
 class SpatialActionCanvas(QtWidgets.QWidget):
-    """
-    Interactive canvas with proportional scaling (Aspect Ratio locking),
-    customizable pins, and movable action buttons.
-    """
+    """Interactive canvas with proportional scaling, customizable pins, and movable action buttons."""
 
     PIN_RADIUS = 9
 
@@ -79,7 +76,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         self.dragged_pin = None
         self.drag_offset = QtCore.QPoint()
 
-        # Context menu spawn click cache
         self.last_menu_pos_norm = (0.5, 0.5)
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -212,6 +208,11 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             "tween_snap_left": "tween_snap_left",
             "tween_snap_right": "tween_snap_right",
             "tween_mid_50": "tween_breakdown_50",
+            "cascade_fwd_1": "cascade_forward_1",
+            "cascade_fwd_2": "cascade_forward_2",
+            "cascade_bwd_1": "cascade_backward_1",
+            "shift_left_1": "shift_left_1",
+            "shift_right_1": "shift_right_1",
             "temp_smart": "create_smart",
             "temp_offset_toggle": "toggle_offset_mode",
             "temp_aim_create": "create_temp_aim",
@@ -269,10 +270,9 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         )
 
     def _get_image_rect(self):
-        """Calculates precise centered image rectangle maintaining aspect ratio."""
         if not self.pixmap or self.pixmap.isNull():
             return QtCore.QRect()
-        
+
         pix_w = self.pixmap.width()
         pix_h = self.pixmap.height()
         if pix_w <= 0 or pix_h <= 0:
@@ -649,6 +649,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
         categories_map = {
             "Tween": tools_menu.addMenu("⚖️ Tween"),
+            "Time Shift": tools_menu.addMenu("⏱ Time Shift & Cascade"),
             "Temp Controls": tools_menu.addMenu("⚡ Temp Controls"),
             "Pose": tools_menu.addMenu("🧘 Pose"),
             "Animation": tools_menu.addMenu("🎬 Animation"),
@@ -665,7 +666,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         tools_menu.addSeparator()
-        for direct_id, direct_title in [("temp_offset_toggle", "⏱ Offset"), ("trail_toggle", "🎨 Motion Trail")]:
+        for direct_id, direct_title in [("temp_offset_toggle", "⏱ Global Offset"), ("trail_toggle", "🎨 Motion Trail")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
