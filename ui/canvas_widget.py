@@ -12,9 +12,22 @@ import maya.mel as mel
 
 
 class SpatialActionCanvas(QtWidgets.QWidget):
-    """Interactive canvas with proportional scaling, customizable pins, and movable action buttons."""
+    """
+    Interactive canvas with AnimBot-style interactive Sliders
+    and 6 clearly distributed step dots: -50%, -20%, -5% | +5%, +20%, +50%.
+    """
 
     PIN_RADIUS = 9
+
+    # Точки розміщені симетрично на вільному просторі з кожного боку треку
+    TICK_OFFSETS = [
+        (-0.85, 50.0, "-50%"),
+        (-0.58, 20.0, "-20%"),
+        (-0.30, 5.0, "-5%"),
+        (0.30, 5.0, "+5%"),
+        (0.58, 20.0, "+20%"),
+        (0.85, 50.0, "+50%")
+    ]
 
     MENU_STYLE = """
         QMenu {
@@ -66,6 +79,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         self.pixmap = None
         self.pins = []
         self.buttons = []
+        self.sliders = []  # [{'label': 'Tween', 'mode': 'Tween', 'action_id': 'tween_mid_50', 'u': 0.5, 'v': 0.8, 'w': 210, 'h': 24, 'val': 0.0}]
 
         self.is_box_selecting = False
         self.box_start = QtCore.QPoint()
@@ -74,6 +88,10 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         # Drag States (Ctrl + Drag)
         self.dragged_button = None
         self.dragged_pin = None
+        self.dragged_slider = None
+        self.active_slider_handle = None
+        self.slider_cached_state = {}
+        self.is_handle_dragging = False
         self.drag_offset = QtCore.QPoint()
 
         self.last_menu_pos_norm = (0.5, 0.5)
@@ -111,7 +129,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             except Exception:
                 pass
 
-        data = {"pins": self.pins, "buttons": self.buttons}
+        data = {"pins": self.pins, "buttons": self.buttons, "sliders": self.sliders}
         try:
             with open(self.data_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
@@ -127,10 +145,14 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     data = json.load(f)
                     self.pins = data.get("pins", [])
                     self.buttons = data.get("buttons", [])
+                    self.sliders = data.get("sliders", [])
                     for b in self.buttons:
                         b["w"] = self._calc_button_width(b.get("label", "Action"))
+                    for s in self.sliders:
+                        if s.get("w", 0) < 210:
+                            s["w"] = 210
             except Exception:
-                self.pins, self.buttons = [], []
+                self.pins, self.buttons, self.sliders = [], [], []
 
     def _calc_button_width(self, text):
         font = QtGui.QFont()
@@ -155,6 +177,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
     def clear_all(self):
         self.pins.clear()
         self.buttons.clear()
+        self.sliders.clear()
         self.pixmap = None
         self.save_state()
         self.updateGeometry()
@@ -167,7 +190,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         if file_path:
             if not file_path.endswith(".json"):
                 file_path += ".json"
-            data = {"pins": self.pins, "buttons": self.buttons}
+            data = {"pins": self.pins, "buttons": self.buttons, "sliders": self.sliders}
             try:
                 with open(file_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=4)
@@ -190,8 +213,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     data = json.load(f)
                     self.pins = data.get("pins", [])
                     self.buttons = data.get("buttons", [])
+                    self.sliders = data.get("sliders", [])
                     for b in self.buttons:
                         b["w"] = self._calc_button_width(b.get("label", "Action"))
+                    for s in self.sliders:
+                        if s.get("w", 0) < 210:
+                            s["w"] = 210
                 img_file = file_path.replace(".json", "_img.png")
                 self.pixmap = QtGui.QPixmap(img_file) if os.path.exists(img_file) else None
                 self.save_state()
@@ -202,42 +229,9 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 cmds.warning(f"Failed to load preset: {e}")
 
     def register_action_to_maya_hotkeys(self, action_id, label="Action"):
-        api_map = {
-            "tween_step_left": "tween_step_left",
-            "tween_step_right": "tween_step_right",
-            "tween_snap_left": "tween_snap_left",
-            "tween_snap_right": "tween_snap_right",
-            "tween_mid_50": "tween_breakdown_50",
-            "cascade_fwd_1": "cascade_forward_1",
-            "cascade_fwd_2": "cascade_forward_2",
-            "cascade_bwd_1": "cascade_backward_1",
-            "shift_left_1": "shift_left_1",
-            "shift_right_1": "shift_right_1",
-            "temp_smart": "create_smart",
-            "temp_offset_toggle": "toggle_offset_mode",
-            "temp_aim_create": "create_temp_aim",
-            "temp_ik_create": "create_temp_ik",
-            "temp_set_pivot": "create_pivot_locator",
-            "temp_bake_pivot": "apply_pivot_locator",
-            "copy_pose": "copy_pose",
-            "paste_pose": "paste_pose",
-            "mirror_pose": "mirror_pose",
-            "copy_anim": "copy_animation",
-            "paste_anim": "paste_animation",
-            "mirror_anim": "mirror_animation",
-            "smart_euler_filter": "smart_euler_filter",
-            "bake_selected": "bake_selected",
-            "temp_bake_all": "bake_all",
-            "toggle_sampling": "toggle_bake_sampling",
-            "trail_toggle": "toggle_motion_trail",
-            "scan_rig": "scan_rig",
-            "default_pose": "reset_default_pose"
-        }
-
-        func_name = api_map.get(action_id, action_id)
-        cmd_name = f"DooAnim_{func_name}"
+        cmd_name = f"DooAnim_{action_id}"
         name_cmd_name = f"{cmd_name}NameCommand"
-        python_code = f"import DooAnimKit; DooAnimKit.api.{func_name}()"
+        python_code = f"import DooAnimKit; DooAnimKit.api.{action_id}()"
 
         if cmds.runTimeCommand(cmd_name, exists=True):
             cmds.runTimeCommand(cmd_name, edit=True, delete=True)
@@ -300,6 +294,30 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         bw = btn.get("w", self._calc_button_width(btn.get("label", "Action")))
         return QtCore.QRect(bx, by, bw, btn.get("h", 24))
 
+    def _get_slider_rect(self, sld, img_rect):
+        sx = img_rect.x() + int(sld["u"] * img_rect.width())
+        sy = img_rect.y() + int(sld["v"] * img_rect.height())
+        sw = max(210, sld.get("w", 210))
+        sh = sld.get("h", 24)
+        return QtCore.QRect(sx, sy, sw, sh)
+
+    def _get_slider_center_btn_rect(self, sld_rect, val=0.0):
+        btn_w = 32
+        max_shift = (sld_rect.width() // 2) - (btn_w // 2) - 3
+        mid_x = sld_rect.center().x() + int(val * max_shift)
+        return QtCore.QRect(mid_x - btn_w // 2, sld_rect.y(), btn_w, sld_rect.height())
+
+    def _get_tick_points(self, sld_rect):
+        mid_x = sld_rect.center().x()
+        mid_y = sld_rect.center().y()
+        half_w = (sld_rect.width() // 2) - 4
+
+        points = []
+        for factor, pct, label in self.TICK_OFFSETS:
+            tx = mid_x + int(factor * half_w)
+            points.append((tx, mid_y, pct, label))
+        return points
+
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
@@ -314,10 +332,10 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.rect(), QtCore.Qt.AlignCenter,
                 "1. Take screenshot (Win + Shift + S)\n"
                 "2. Click 'Paste Screenshot'\n"
-                "3. RMB: Tools / Add Pin / Save / Open\n"
-                "4. Menu click: Run Action | Ctrl + Menu Click: Spawn Button\n"
-                "5. Ctrl + Left Drag: Move Buttons / Pins\n"
-                "6. RMB on Button: Rename / Color / Hotkeys / Delete"
+                "3. RMB: Add Pin / Create Slider / Tools\n"
+                "4. Drag Center Handle left/right (-100% to +100%)\n"
+                "5. Click Step Dots: -50%, -20%, -5% | +5%, +20%, +50%\n"
+                "6. Ctrl + Left Drag: Move Sliders / Buttons / Pins"
             )
 
         if img_rect.isEmpty():
@@ -326,7 +344,62 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         is_offset_on = getattr(self.main_window.temp_ctrl_mgr, "offset_active", False)
         bake_keys_only = getattr(self.main_window.temp_ctrl_mgr, "bake_keys_only", True)
 
-        # 1. Draw Action Buttons
+        # 1. Draw Sliders
+        for sld in self.sliders:
+            srect = self._get_slider_rect(sld, img_rect)
+            val = sld.get("val", 0.0)
+
+            # Base Track
+            painter.setBrush(QtGui.QBrush(QtGui.QColor("#1a1e26")))
+            painter.setPen(QtGui.QPen(QtGui.QColor("#37474f"), 1.2))
+            painter.drawRoundedRect(srect, 4, 4)
+
+            # Center Indicator Line
+            mid_x = srect.center().x()
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 40), 1, QtCore.Qt.DashLine))
+            painter.drawLine(mid_x, srect.y() + 3, mid_x, srect.bottom() - 3)
+
+            # Interactive Active Fill Bar
+            if abs(val) > 0.02:
+                handle_rect = self._get_slider_center_btn_rect(srect, val)
+                hx = handle_rect.center().x()
+                fill_rect = QtCore.QRect(min(mid_x, hx), srect.y() + 2, abs(hx - mid_x), srect.height() - 4)
+                fill_color = QtGui.QColor("#EC407A") if val < 0 else QtGui.QColor("#AB47BC")
+                painter.setBrush(QtGui.QBrush(fill_color))
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.drawRoundedRect(fill_rect, 2, 2)
+
+            # Step Tick Dots
+            for tx, ty, pct, label in self._get_tick_points(srect):
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 200)))
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.drawEllipse(QtCore.QPoint(tx, ty), 2, 2)
+
+            # Center Handle
+            c_rect = self._get_slider_center_btn_rect(srect, val)
+            action_id = sld.get("action_id", "tween_mid_50")
+
+            if action_id == "temp_offset_toggle" and is_offset_on:
+                c_col = QtGui.QColor("#E65100")
+            else:
+                c_col = QtGui.QColor(sld.get("color", "#00838f"))
+
+            painter.setBrush(QtGui.QBrush(c_col))
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 220), 1))
+            painter.drawRoundedRect(c_rect, 4, 4)
+
+            painter.setPen(QtCore.Qt.white)
+            font = painter.font()
+            font.setBold(True)
+            font.setPointSize(7)
+            painter.setFont(font)
+
+            if abs(val) > 0.04:
+                painter.drawText(c_rect, QtCore.Qt.AlignCenter, f"{int(val * 100):+d}%")
+            else:
+                painter.drawText(c_rect, QtCore.Qt.AlignCenter, sld.get("label", "Tween"))
+
+        # 2. Draw Action Buttons
         for btn in self.buttons:
             brect = self._get_btn_rect(btn, img_rect)
             action_id = btn.get("action_id")
@@ -355,7 +428,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             painter.setFont(font)
             painter.drawText(brect, QtCore.Qt.AlignCenter, display_label)
 
-        # 2. Draw Pins
+        # 3. Draw Pins
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
             py = img_rect.y() + int(pin["v"] * img_rect.height())
@@ -413,7 +486,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             else:
                 painter.drawEllipse(QtCore.QPoint(px, py), r, r)
 
-        # 3. Marquee Box
+        # 4. Marquee Box
         if self.is_box_selecting:
             box_rect = QtCore.QRect(self.box_start, self.box_current).normalized()
             painter.setPen(QtGui.QPen(QtGui.QColor(0, 229, 255), 1.5, QtCore.Qt.DashLine))
@@ -430,6 +503,44 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             return
 
         if event.button() == QtCore.Qt.LeftButton:
+            # 1. Перевірка натискання на Слайдери
+            for sld in reversed(self.sliders):
+                srect = self._get_slider_rect(sld, img_rect)
+                if srect.contains(event.pos()):
+                    if event.modifiers() & QtCore.Qt.ControlModifier:
+                        self.dragged_slider = sld
+                        self.drag_offset = event.pos() - srect.topLeft()
+                        return
+
+                    c_rect = self._get_slider_center_btn_rect(srect, sld.get("val", 0.0))
+
+                    # Точки (Dots)
+                    if not c_rect.contains(event.pos()):
+                        for tx, ty, pct, label in self._get_tick_points(srect):
+                            if ((event.pos().x() - tx)**2 + (event.pos().y() - ty)**2)**0.5 <= 7:
+                                direction = 1 if tx > srect.center().x() else -1
+                                mode = sld.get("mode", "Tween")
+
+                                if mode == "Tween" and hasattr(self.main_window, "tween_engine"):
+                                    self.main_window.tween_engine.step_nudge(direction=direction, step_percent=pct)
+                                elif mode == "Time Shift" and hasattr(self.main_window, "time_shift_engine"):
+                                    offset_f = int(round(pct / 50.0 * 2.0)) or (1 if direction > 0 else -1)
+                                    self.main_window.time_shift_engine.shift_selected(frame_offset=offset_f)
+                                elif mode == "Cascade" and hasattr(self.main_window, "time_shift_engine"):
+                                    step_f = 1 if pct <= 20 else 2
+                                    self.main_window.time_shift_engine.cascade_shift(step=step_f, reverse=(direction < 0))
+
+                                self.update()
+                                return
+
+                    # Центральна ручка (початок перетягування)
+                    self.active_slider_handle = sld
+                    self.is_handle_dragging = False
+                    if hasattr(self.main_window, "tween_engine"):
+                        self.slider_cached_state = self.main_window.tween_engine.cache_current_tween_state()
+                    return
+
+            # 2. Кнопки
             for btn in reversed(self.buttons):
                 brect = self._get_btn_rect(btn, img_rect)
                 if brect.contains(event.pos()):
@@ -442,6 +553,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                         self.update()
                     return
 
+            # 3. Піни
             for pin in reversed(self.pins):
                 px = img_rect.x() + int(pin["u"] * img_rect.width())
                 py = img_rect.y() + int(pin["v"] * img_rect.height())
@@ -459,9 +571,36 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             self.box_start = event.pos()
             self.box_current = event.pos()
 
+    def _update_slider_drag(self, sld, pos, srect):
+        btn_w = 32
+        max_shift = float((srect.width() // 2) - (btn_w // 2) - 3)
+        offset_x = pos.x() - srect.center().x()
+        val = max(-1.0, min(1.0, offset_x / max(1.0, max_shift)))
+        sld["val"] = val
+
+        if abs(val) > 0.04:
+            self.is_handle_dragging = True
+
+        mode = sld.get("mode", "Tween")
+        if mode == "Tween" and hasattr(self.main_window, "tween_engine"):
+            self.main_window.tween_engine.tween_interactive_delta(self.slider_cached_state, val)
+        self.update()
+
     def mouseMoveEvent(self, event):
         img_rect = self._get_image_rect()
-        if self.dragged_button and not img_rect.isEmpty():
+        if self.active_slider_handle and not img_rect.isEmpty():
+            srect = self._get_slider_rect(self.active_slider_handle, img_rect)
+            self._update_slider_drag(self.active_slider_handle, event.pos(), srect)
+            return
+
+        if self.dragged_slider and not img_rect.isEmpty():
+            new_top_left = event.pos() - self.drag_offset
+            u_coord = (new_top_left.x() - img_rect.x()) / float(img_rect.width())
+            v_coord = (new_top_left.y() - img_rect.y()) / float(img_rect.height())
+            self.dragged_slider["u"] = max(0.0, min(0.95, u_coord))
+            self.dragged_slider["v"] = max(0.0, min(0.95, v_coord))
+            self.update()
+        elif self.dragged_button and not img_rect.isEmpty():
             new_top_left = event.pos() - self.drag_offset
             u_coord = (new_top_left.x() - img_rect.x()) / float(img_rect.width())
             v_coord = (new_top_left.y() - img_rect.y()) / float(img_rect.height())
@@ -480,6 +619,25 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event):
+        if self.active_slider_handle:
+            # Клік по центру без тягання -> 50% Breakdown
+            if not self.is_handle_dragging:
+                self.action_registry.execute(self.active_slider_handle.get("action_id", "tween_mid_50"))
+                self.main_window.sync_ui_state()
+
+            # Пружне повернення в центр
+            self.active_slider_handle["val"] = 0.0
+            self.active_slider_handle = None
+            self.is_handle_dragging = False
+            self.slider_cached_state.clear()
+            self.update()
+            return
+
+        if self.dragged_slider:
+            self.dragged_slider = None
+            self.save_state()
+            return
+
         if self.dragged_button:
             self.dragged_button = None
             self.save_state()
@@ -543,7 +701,64 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(self.MENU_STYLE)
 
-        # 1. Check Button Under Cursor
+        # 1. Slider Under Cursor
+        clicked_sld = None
+        for sld in reversed(self.sliders):
+            if self._get_slider_rect(sld, img_rect).contains(pos):
+                clicked_sld = sld
+                break
+
+        if clicked_sld:
+            menu.addSection(f"Slider: {clicked_sld.get('label', 'Tween')}")
+            
+            mode_menu = menu.addMenu("🎯 Slider Mode / Center Action")
+            mode_menu.setStyleSheet(self.MENU_STYLE)
+            modes = [
+                ("Tween: 50% Breakdown", "Tween", "tween_mid_50"),
+                ("Time Shift: Toggle Global Offset", "Time Shift", "temp_offset_toggle"),
+                ("Cascade: +1f Forward", "Cascade", "cascade_fwd_1"),
+                ("Pose: Snap Left (100%)", "Tween", "tween_snap_left"),
+                ("Pose: Snap Right (100%)", "Tween", "tween_snap_right"),
+            ]
+            mode_actions = {}
+            for title, mode_type, act_id in modes:
+                act = mode_menu.addAction(title)
+                mode_actions[act] = (title, mode_type, act_id)
+
+            action_rename_sld = menu.addAction("✏️ Rename Slider...")
+            action_color_sld = menu.addAction("🎨 Pick Center Color...")
+            menu.addSeparator()
+            action_delete_sld = menu.addAction("🗑 Delete Slider")
+
+            chosen = menu.exec_(self.mapToGlobal(pos))
+            if chosen in mode_actions:
+                title, mode_type, act_id = mode_actions[chosen]
+                clicked_sld["mode"] = mode_type
+                clicked_sld["action_id"] = act_id
+                clicked_sld["label"] = title.split(":")[0]
+                self.save_state()
+                self.update()
+            elif chosen == action_rename_sld:
+                new_lbl, ok = QtWidgets.QInputDialog.getText(
+                    self, "Rename Slider", "Enter slider label:", text=clicked_sld.get("label", "")
+                )
+                if ok and new_lbl:
+                    clicked_sld["label"] = new_lbl
+                    self.save_state()
+                    self.update()
+            elif chosen == action_color_sld:
+                col = QtWidgets.QColorDialog.getColor(QtGui.QColor(clicked_sld.get("color", "#00838f")), self, "Select Color")
+                if col.isValid():
+                    clicked_sld["color"] = col.name()
+                    self.save_state()
+                    self.update()
+            elif chosen == action_delete_sld:
+                self.sliders.remove(clicked_sld)
+                self.save_state()
+                self.update()
+            return
+
+        # 2. Button Under Cursor
         clicked_btn = None
         for btn in reversed(self.buttons):
             if self._get_btn_rect(btn, img_rect).contains(pos):
@@ -580,10 +795,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             elif chosen == action_reset_color_btn:
                 all_actions = self.action_registry.get_action_list()
                 original_act = next((a for a in all_actions if a["id"] == clicked_btn.get("action_id")), None)
-                if original_act:
-                    clicked_btn["color"] = original_act.get("color", "#336699")
-                else:
-                    clicked_btn["color"] = "#336699"
+                clicked_btn["color"] = original_act.get("color", "#336699") if original_act else "#336699"
                 self.save_state()
                 self.update()
             elif chosen == action_save_hotkey:
@@ -596,7 +808,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # 2. Check Pin Under Cursor
+        # 3. Pin Under Cursor
         clicked_pin = None
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
@@ -639,8 +851,9 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # 3. Canvas General Context Menu
+        # 4. Canvas Context Menu
         action_add_pin = menu.addAction("📍 Add Pin")
+        action_add_slider = menu.addAction("🎚 Create Slider...")
         menu.addSeparator()
 
         tools_menu = menu.addMenu("🛠 Tools")
@@ -693,6 +906,23 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             self.pins.append({"name": sel[0], "u": norm_u, "v": norm_v, "shape": "Circle"})
             self.save_state()
             self.update()
+
+        elif chosen == action_add_slider:
+            label, ok = QtWidgets.QInputDialog.getText(self, "Create Slider", "Enter Slider Name:", text="Tween")
+            if ok and label:
+                self.sliders.append({
+                    "label": label,
+                    "mode": "Tween",
+                    "action_id": "tween_mid_50",
+                    "u": norm_u,
+                    "v": norm_v,
+                    "w": 210,
+                    "h": 24,
+                    "val": 0.0,
+                    "color": "#00838f"
+                })
+                self.save_state()
+                self.update()
 
         elif chosen == action_save_preset:
             self.save_preset_to_file()

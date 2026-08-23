@@ -3,7 +3,7 @@ from DooAnimKit.core.context import UndoContext
 
 
 class TweenEngine:
-    """AnimBot-style keyframe tweening engine with incremental nudging and instant snap to neighbors."""
+    """AnimBot-style keyframe tweening engine with clean percentage blending and interactive delta."""
 
     CHANNELS = [
         "translateX", "translateY", "translateZ",
@@ -15,14 +15,14 @@ class TweenEngine:
         self.step_percent = 5.0
 
     def _get_target_objects(self):
-        sel = cmds.ls(selection=True, type="transform") or []
-        return sel
+        return cmds.ls(selection=True, type="transform") or []
 
     def step_nudge(self, direction=-1, step_percent=5.0):
         """
-        Shifts pose by +5% or -5% between previous and next neighbor keys continuously.
-        direction = -1 (towards Left / Previous Key)
-        direction = +1 (towards Right / Next Key)
+        Applies exact percentage blend towards previous key (-5%, -20%, -50%) 
+        or next key (+5%, +20%, +50%).
+        direction: -1 (Left / Prev), +1 (Right / Next)
+        step_percent: 5.0, 20.0, 50.0
         """
         targets = self._get_target_objects()
         if not targets:
@@ -30,7 +30,10 @@ class TweenEngine:
             return False
 
         current_frame = cmds.currentTime(query=True)
-        step = (float(step_percent) / 100.0) * direction
+        # Розраховуємо цільовий відсоток між лівим (0%) і правим (100%) ключем:
+        # -50% -> 0.0 (Left-most), -20% -> 0.30, -5% -> 0.45, +5% -> 0.55, +20% -> 0.70, +50% -> 1.0 (Right-most)
+        target_factor = 0.5 + (float(step_percent) / 100.0) * direction
+        target_factor = max(0.0, min(1.0, target_factor))
         applied_any = False
 
         with UndoContext("TweenStepNudge"):
@@ -40,9 +43,7 @@ class TweenEngine:
 
                 for attr in self.CHANNELS:
                     full_attr = f"{node}.{attr}"
-                    if not cmds.attributeQuery(attr, node=node, exists=True):
-                        continue
-                    if cmds.getAttr(full_attr, lock=True):
+                    if not cmds.attributeQuery(attr, node=node, exists=True) or cmds.getAttr(full_attr, lock=True):
                         continue
 
                     prev_keys = cmds.keyframe(full_attr, query=True, time=(None, current_frame - 0.001), timeChange=True) or []
@@ -51,83 +52,88 @@ class TweenEngine:
                     if not prev_keys or not next_keys:
                         continue
 
-                    prev_time = prev_keys[-1]
-                    next_time = next_keys[0]
+                    prev_val = cmds.keyframe(full_attr, query=True, time=(prev_keys[-1], prev_keys[-1]), valueChange=True)[0]
+                    next_val = cmds.keyframe(full_attr, query=True, time=(next_keys[0], next_keys[0]), valueChange=True)[0]
 
-                    prev_val = cmds.keyframe(full_attr, query=True, time=(prev_time, prev_time), valueChange=True)[0]
-                    next_val = cmds.keyframe(full_attr, query=True, time=(next_time, next_time), valueChange=True)[0]
-
-                    has_key = bool(cmds.keyframe(full_attr, query=True, time=(current_frame, current_frame), keyframeCount=True))
-                    if has_key:
-                        curr_val = cmds.keyframe(full_attr, query=True, time=(current_frame, current_frame), valueChange=True)[0]
-                    else:
-                        curr_val = cmds.getAttr(full_attr)
-
-                    val_range = next_val - prev_val
-
-                    if abs(val_range) > 1e-5:
-                        current_factor = (curr_val - prev_val) / val_range
-                        new_factor = current_factor + step
-                        new_val = prev_val + val_range * new_factor
-                    else:
-                        new_val = curr_val
-
+                    new_val = prev_val + (next_val - prev_val) * target_factor
                     cmds.setKeyframe(full_attr, time=current_frame, value=new_val)
                     applied_any = True
 
         if applied_any:
-            dir_str = "Left (-5%)" if direction < 0 else "Right (+5%)"
-            cmds.inViewMessage(amg=f"Tween Nudge: <hl>{dir_str}</hl>", pos="topCenter", fade=True)
+            dir_str = f"Left (-{int(step_percent)}%)" if direction < 0 else f"Right (+{int(step_percent)}%)"
+            cmds.inViewMessage(amg=f"Tween: <hl>{dir_str}</hl>", pos="topCenter", fade=True)
         return applied_any
 
-    def snap_to_neighbor(self, direction=-1):
-        """
-        Instantly snaps and matches 100% of the neighbor pose at the current frame.
-        direction = -1 -> 100% Left (Previous Key)
-        direction = +1 -> 100% Right (Next Key)
-        """
+    def cache_current_tween_state(self):
+        """Caches base keys when starting to drag slider."""
         targets = self._get_target_objects()
         if not targets:
-            cmds.warning("Please select at least one controller!")
+            return {}
+
+        current_frame = cmds.currentTime(query=True)
+        cached = {}
+
+        for node in targets:
+            if not cmds.objExists(node):
+                continue
+            cached[node] = {}
+
+            for attr in self.CHANNELS:
+                full_attr = f"{node}.{attr}"
+                if not cmds.attributeQuery(attr, node=node, exists=True) or cmds.getAttr(full_attr, lock=True):
+                    continue
+
+                prev_keys = cmds.keyframe(full_attr, query=True, time=(None, current_frame - 0.001), timeChange=True) or []
+                next_keys = cmds.keyframe(full_attr, query=True, time=(current_frame + 0.001, None), timeChange=True) or []
+
+                if not prev_keys or not next_keys:
+                    continue
+
+                prev_val = cmds.keyframe(full_attr, query=True, time=(prev_keys[-1], prev_keys[-1]), valueChange=True)[0]
+                next_val = cmds.keyframe(full_attr, query=True, time=(next_keys[0], next_keys[0]), valueChange=True)[0]
+
+                has_key = bool(cmds.keyframe(full_attr, query=True, time=(current_frame, current_frame), keyframeCount=True))
+                start_val = cmds.keyframe(full_attr, query=True, time=(current_frame, current_frame), valueChange=True)[0] if has_key else cmds.getAttr(full_attr)
+
+                cached[node][attr] = {
+                    "prev_val": prev_val,
+                    "next_val": next_val,
+                    "start_val": start_val
+                }
+        return cached
+
+    def tween_interactive_delta(self, base_values, factor_delta):
+        """
+        Interactive drag delta from center handle:
+        factor_delta = -1.0 -> 100% Left (Prev Key)
+        factor_delta = 0.0  -> Base state
+        factor_delta = +1.0 -> 100% Right (Next Key)
+        """
+        targets = self._get_target_objects()
+        if not targets or not base_values:
             return False
 
         current_frame = cmds.currentTime(query=True)
-        applied_any = False
 
-        with UndoContext("SnapToNeighbor"):
-            for node in targets:
-                if not cmds.objExists(node):
-                    continue
+        for node in targets:
+            if node not in base_values:
+                continue
 
-                for attr in self.CHANNELS:
-                    full_attr = f"{node}.{attr}"
-                    if not cmds.attributeQuery(attr, node=node, exists=True):
-                        continue
-                    if cmds.getAttr(full_attr, lock=True):
-                        continue
+            for attr, data in base_values[node].items():
+                full_attr = f"{node}.{attr}"
+                prev_val = data["prev_val"]
+                next_val = data["next_val"]
+                start_val = data["start_val"]
 
-                    if direction < 0:
-                        keys = cmds.keyframe(full_attr, query=True, time=(None, current_frame - 0.001), timeChange=True) or []
-                        if not keys:
-                            continue
-                        target_time = keys[-1]
-                    else:
-                        keys = cmds.keyframe(full_attr, query=True, time=(current_frame + 0.001, None), timeChange=True) or []
-                        if not keys:
-                            continue
-                        target_time = keys[0]
+                if factor_delta < 0:
+                    new_val = start_val + (start_val - prev_val) * factor_delta
+                else:
+                    new_val = start_val + (next_val - start_val) * factor_delta
 
-                    target_val = cmds.keyframe(full_attr, query=True, time=(target_time, target_time), valueChange=True)[0]
-                    cmds.setKeyframe(full_attr, time=current_frame, value=target_val)
-                    applied_any = True
-
-        if applied_any:
-            side_str = "Left (Previous Key)" if direction < 0 else "Right (Next Key)"
-            cmds.inViewMessage(amg=f"Snapped 100% to <hl>{side_str}</hl>", pos="topCenter", fade=True)
-        return applied_any
+                cmds.setKeyframe(full_attr, time=current_frame, value=new_val)
+        return True
 
     def tween_absolute(self, percentage=50.0):
-        """Snaps to exact percentage between neighbors (e.g. 50% breakdown)."""
         targets = self._get_target_objects()
         if not targets:
             cmds.warning("Please select at least one controller!")
@@ -144,9 +150,7 @@ class TweenEngine:
 
                 for attr in self.CHANNELS:
                     full_attr = f"{node}.{attr}"
-                    if not cmds.attributeQuery(attr, node=node, exists=True):
-                        continue
-                    if cmds.getAttr(full_attr, lock=True):
+                    if not cmds.attributeQuery(attr, node=node, exists=True) or cmds.getAttr(full_attr, lock=True):
                         continue
 
                     prev_keys = cmds.keyframe(full_attr, query=True, time=(None, current_frame - 0.001), timeChange=True) or []
@@ -155,11 +159,8 @@ class TweenEngine:
                     if not prev_keys or not next_keys:
                         continue
 
-                    prev_time = prev_keys[-1]
-                    next_time = next_keys[0]
-
-                    prev_val = cmds.keyframe(full_attr, query=True, time=(prev_time, prev_time), valueChange=True)[0]
-                    next_val = cmds.keyframe(full_attr, query=True, time=(next_time, next_time), valueChange=True)[0]
+                    prev_val = cmds.keyframe(full_attr, query=True, time=(prev_keys[-1], prev_keys[-1]), valueChange=True)[0]
+                    next_val = cmds.keyframe(full_attr, query=True, time=(next_keys[0], next_keys[0]), valueChange=True)[0]
 
                     new_val = prev_val + (next_val - prev_val) * factor
                     cmds.setKeyframe(full_attr, time=current_frame, value=new_val)
