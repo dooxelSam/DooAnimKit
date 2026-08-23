@@ -12,11 +12,13 @@ import maya.mel as mel
 
 
 class SpatialActionCanvas(QtWidgets.QWidget):
-    """Interactive canvas with background character screenshot, customizable pins, and dynamic compact buttons."""
+    """
+    Interactive canvas with proportional scaling (Aspect Ratio locking),
+    customizable pins, and movable action buttons.
+    """
 
     PIN_RADIUS = 9
 
-    # Збільшений padding-right для усунення бага Qt зі зрізанням останньої літери
     MENU_STYLE = """
         QMenu {
             background-color: #1e222b;
@@ -28,7 +30,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             font-weight: 500;
         }
         QMenu::item {
-            padding: 6px 36px 6px 12px;
+            padding: 5px 22px 5px 10px;
             border-radius: 4px;
             margin: 1px 2px;
         }
@@ -53,13 +55,14 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             border-radius: 3px;
         }
         QMenu::right-arrow {
-            margin-right: 8px;
+            margin-right: 6px;
         }
     """
 
     def __init__(self, main_window, parent=None):
         super(SpatialActionCanvas, self).__init__(parent=parent)
-        self.setMinimumSize(400, 500)
+        self.setMinimumSize(250, 250)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.main_window = main_window
         self.action_registry = main_window.action_registry
 
@@ -86,6 +89,14 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
         self._ensure_storage_dir()
         self._load_saved_data()
+
+    def hasHeightForWidth(self):
+        return self.pixmap is not None and not self.pixmap.isNull()
+
+    def heightForWidth(self, width):
+        if self.pixmap and not self.pixmap.isNull() and self.pixmap.width() > 0:
+            return int(width * (self.pixmap.height() / float(self.pixmap.width())))
+        return width
 
     def _ensure_storage_dir(self):
         if not os.path.exists(self.presets_dir):
@@ -139,6 +150,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         if mime.hasImage():
             self.pixmap = cb.pixmap()
             self.save_state()
+            self.updateGeometry()
             self.update()
             return True
         cmds.warning("No image found in clipboard! Press Win + Shift + S first.")
@@ -149,6 +161,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         self.buttons.clear()
         self.pixmap = None
         self.save_state()
+        self.updateGeometry()
         self.update()
 
     def save_preset_to_file(self):
@@ -186,6 +199,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 img_file = file_path.replace(".json", "_img.png")
                 self.pixmap = QtGui.QPixmap(img_file) if os.path.exists(img_file) else None
                 self.save_state()
+                self.updateGeometry()
                 self.update()
                 cmds.inViewMessage(amg="Preset loaded successfully!", pos="topCenter", fade=True)
             except Exception as e:
@@ -195,6 +209,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         api_map = {
             "tween_step_left": "tween_step_left",
             "tween_step_right": "tween_step_right",
+            "tween_snap_left": "tween_snap_left",
+            "tween_snap_right": "tween_snap_right",
             "tween_mid_50": "tween_breakdown_50",
             "temp_smart": "create_smart",
             "temp_offset_toggle": "toggle_offset_mode",
@@ -208,6 +224,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             "copy_anim": "copy_animation",
             "paste_anim": "paste_animation",
             "mirror_anim": "mirror_animation",
+            "smart_euler_filter": "smart_euler_filter",
             "bake_selected": "bake_selected",
             "temp_bake_all": "bake_all",
             "toggle_sampling": "toggle_bake_sampling",
@@ -252,15 +269,30 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         )
 
     def _get_image_rect(self):
+        """Calculates precise centered image rectangle maintaining aspect ratio."""
         if not self.pixmap or self.pixmap.isNull():
             return QtCore.QRect()
-        scaled = self.pixmap.scaled(self.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-        return QtCore.QRect(
-            (self.width() - scaled.width()) // 2,
-            (self.height() - scaled.height()) // 2,
-            scaled.width(),
-            scaled.height()
-        )
+        
+        pix_w = self.pixmap.width()
+        pix_h = self.pixmap.height()
+        if pix_w <= 0 or pix_h <= 0:
+            return QtCore.QRect()
+
+        aspect = float(pix_w) / float(pix_h)
+        canvas_w = self.width()
+        canvas_h = self.height()
+
+        if canvas_w / float(canvas_h) > aspect:
+            draw_h = canvas_h
+            draw_w = int(draw_h * aspect)
+        else:
+            draw_w = canvas_w
+            draw_h = int(draw_w / aspect)
+
+        draw_x = (canvas_w - draw_w) // 2
+        draw_y = (canvas_h - draw_h) // 2
+
+        return QtCore.QRect(draw_x, draw_y, max(1, draw_w), max(1, draw_h))
 
     def _get_btn_rect(self, btn, img_rect):
         bx = img_rect.x() + int(btn["u"] * img_rect.width())
@@ -271,6 +303,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
         img_rect = self._get_image_rect()
 
         if self.pixmap and not self.pixmap.isNull():
@@ -293,7 +326,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         is_offset_on = getattr(self.main_window.temp_ctrl_mgr, "offset_active", False)
         bake_keys_only = getattr(self.main_window.temp_ctrl_mgr, "bake_keys_only", True)
 
-        # 1. Draw Buttons
+        # 1. Draw Action Buttons
         for btn in self.buttons:
             brect = self._get_btn_rect(btn, img_rect)
             action_id = btn.get("action_id")
@@ -301,11 +334,11 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             if action_id == "temp_offset_toggle" and is_offset_on:
                 bg_col = QtGui.QColor("#E65100")
                 border_pen = QtGui.QPen(QtGui.QColor("#FFCC80"), 2.0)
-                display_label = f"[ON] {btn.get('label', 'Offset')}"
+                display_label = f"⏱ [ON] {btn.get('label', 'Offset')}"
             elif action_id == "toggle_sampling":
                 bg_col = QtGui.QColor("#FB8C00") if bake_keys_only else QtGui.QColor("#455A64")
                 border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
-                display_label = "Keys" if bake_keys_only else "All"
+                display_label = "🎯 Keys" if bake_keys_only else "🎯 All"
             else:
                 bg_col = QtGui.QColor(btn.get("color", "#336699"))
                 border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
@@ -380,7 +413,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             else:
                 painter.drawEllipse(QtCore.QPoint(px, py), r, r)
 
-        # 3. Draw Marquee Box
+        # 3. Marquee Box
         if self.is_box_selecting:
             box_rect = QtCore.QRect(self.box_start, self.box_current).normalized()
             painter.setPen(QtGui.QPen(QtGui.QColor(0, 229, 255), 1.5, QtCore.Qt.DashLine))
