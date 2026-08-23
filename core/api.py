@@ -45,6 +45,14 @@ def tween_step_right():
     """Nudges keyframe +5% towards next neighbor."""
     _get_engine("tween_engine").step_nudge(direction=1, step_percent=5.0)
 
+def tween_snap_left():
+    """Instantly matches 100% pose of previous neighbor."""
+    _get_engine("tween_engine").snap_to_neighbor(direction=-1)
+
+def tween_snap_right():
+    """Instantly matches 100% pose of next neighbor."""
+    _get_engine("tween_engine").snap_to_neighbor(direction=1)
+
 def tween_breakdown_50():
     """Snaps to exact 50% midpoint breakdown."""
     _get_engine("tween_engine").tween_absolute(percentage=50.0)
@@ -96,7 +104,7 @@ def mirror_animation():
     _get_engine("pose_mirror_engine").smart_mirror_animation()
 
 def smart_euler_filter():
-    _get_engine("euler_filter").apply_filter()
+    _get_engine("euler_filter").apply_smart_filter()
 
 def scan_rig():
     _get_engine("pose_mirror_engine").scan_selected_rig()
