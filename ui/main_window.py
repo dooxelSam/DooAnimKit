@@ -8,6 +8,7 @@ from maya.app.general.mayaMixin import MayaQWidgetDockableMixin
 from DooAnimKit.core.temp_control import TempControlManager
 from DooAnimKit.core.mirror import PoseMirrorEngine
 from DooAnimKit.core.temp_aim import TempAimEngine
+from DooAnimKit.core.temp_ik import TempIKManager
 from DooAnimKit.core.motion_trail import MotionTrailManager
 from DooAnimKit.core.tween_engine import TweenEngine
 from DooAnimKit.core.euler_filter import SmartEulerFilter
@@ -25,17 +26,20 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         self.setObjectName(self.UI_NAME)
         self.setWindowTitle("DooAnimKit — Spatial Hub")
 
-        # Core Engines
+        # 1. Core Engines
         self.temp_ctrl_mgr = TempControlManager()
         self.temp_aim_engine = TempAimEngine(main_window=self)
+        self.temp_ik_mgr = TempIKManager(main_window=self)
         self.pose_mirror_engine = PoseMirrorEngine()
         self.trail_mgr = MotionTrailManager()
         self.tween_engine = TweenEngine()
         self.euler_filter = SmartEulerFilter()
 
-        # Action Registry
+        # 2. Action Registry & Popups
         self.action_registry = ActionRegistry(self)
+        self.aim_window = None
 
+        # 3. Build UI
         self._build_ui()
 
     def _build_ui(self):
@@ -43,7 +47,7 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        # 1. Quick Toolbar
+        # Top Toolbar
         top_bar = QtWidgets.QHBoxLayout()
         btn_paste = QtWidgets.QPushButton("📋 Paste Screenshot (Win+Shift+S)")
         btn_paste.setFixedHeight(28)
@@ -57,13 +61,13 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         top_bar.addWidget(btn_clear)
         layout.addLayout(top_bar)
 
-        # 2. Canvas Widget
+        # Interactive Spatial Canvas
         self.canvas = SpatialActionCanvas(self)
         btn_paste.clicked.connect(self.canvas.paste_image_from_clipboard)
         btn_clear.clicked.connect(self.canvas.clear_all)
         layout.addWidget(self.canvas)
 
-        # 3. Helper Footer
+        # Helper Footer
         tip = QtWidgets.QLabel("RMB: Tools Menu | Ctrl + Click on Tool: Add Button | Ctrl + Drag: Move")
         tip.setStyleSheet("color: #888888; font-size: 10px;")
         tip.setAlignment(QtCore.Qt.AlignCenter)

@@ -16,6 +16,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
     PIN_RADIUS = 9
 
+    # Збільшений padding-right для усунення бага Qt зі зрізанням останньої літери
     MENU_STYLE = """
         QMenu {
             background-color: #1e222b;
@@ -27,7 +28,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             font-weight: 500;
         }
         QMenu::item {
-            padding: 5px 22px 5px 10px;
+            padding: 6px 36px 6px 12px;
             border-radius: 4px;
             margin: 1px 2px;
         }
@@ -52,7 +53,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             border-radius: 3px;
         }
         QMenu::right-arrow {
-            margin-right: 6px;
+            margin-right: 8px;
         }
     """
 
@@ -190,19 +191,15 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             except Exception as e:
                 cmds.warning(f"Failed to load preset: {e}")
 
-    # --- AUTO HOTKEY REGISTRATION ---
-
     def register_action_to_maya_hotkeys(self, action_id, label="Action"):
         api_map = {
-            "smart_euler": "apply_smart_euler",
             "tween_step_left": "tween_step_left",
             "tween_step_right": "tween_step_right",
-            "tween_snap_left": "tween_snap_left",
-            "tween_snap_right": "tween_snap_right",
             "tween_mid_50": "tween_breakdown_50",
             "temp_smart": "create_smart",
             "temp_offset_toggle": "toggle_offset_mode",
             "temp_aim_create": "create_temp_aim",
+            "temp_ik_create": "create_temp_ik",
             "temp_set_pivot": "create_pivot_locator",
             "temp_bake_pivot": "apply_pivot_locator",
             "copy_pose": "copy_pose",
@@ -296,7 +293,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         is_offset_on = getattr(self.main_window.temp_ctrl_mgr, "offset_active", False)
         bake_keys_only = getattr(self.main_window.temp_ctrl_mgr, "bake_keys_only", True)
 
-        # Draw Buttons
+        # 1. Draw Buttons
         for btn in self.buttons:
             brect = self._get_btn_rect(btn, img_rect)
             action_id = btn.get("action_id")
@@ -304,11 +301,11 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             if action_id == "temp_offset_toggle" and is_offset_on:
                 bg_col = QtGui.QColor("#E65100")
                 border_pen = QtGui.QPen(QtGui.QColor("#FFCC80"), 2.0)
-                display_label = f"⏱ [ON] {btn.get('label', 'Offset')}"
+                display_label = f"[ON] {btn.get('label', 'Offset')}"
             elif action_id == "toggle_sampling":
                 bg_col = QtGui.QColor("#FB8C00") if bake_keys_only else QtGui.QColor("#455A64")
                 border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
-                display_label = "🎯 Keys" if bake_keys_only else "🎯 All"
+                display_label = "Keys" if bake_keys_only else "All"
             else:
                 bg_col = QtGui.QColor(btn.get("color", "#336699"))
                 border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
@@ -325,7 +322,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             painter.setFont(font)
             painter.drawText(brect, QtCore.Qt.AlignCenter, display_label)
 
-        # Draw Pins
+        # 2. Draw Pins
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
             py = img_rect.y() + int(pin["v"] * img_rect.height())
@@ -383,7 +380,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             else:
                 painter.drawEllipse(QtCore.QPoint(px, py), r, r)
 
-        # Draw Marquee Box
+        # 3. Draw Marquee Box
         if self.is_box_selecting:
             box_rect = QtCore.QRect(self.box_start, self.box_current).normalized()
             painter.setPen(QtGui.QPen(QtGui.QColor(0, 229, 255), 1.5, QtCore.Qt.DashLine))
@@ -513,6 +510,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(self.MENU_STYLE)
 
+        # 1. Check Button Under Cursor
         clicked_btn = None
         for btn in reversed(self.buttons):
             if self._get_btn_rect(btn, img_rect).contains(pos):
@@ -565,6 +563,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
+        # 2. Check Pin Under Cursor
         clicked_pin = None
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
@@ -607,20 +606,20 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # Canvas General Context Menu
-        action_add_pin = menu.addAction("📍 Add Pin")
+        # 3. Canvas General Context Menu
+        action_add_pin = menu.addAction("📍 Add_Pine")
         menu.addSeparator()
 
-        tools_menu = menu.addMenu("🛠 Tools")
+        tools_menu = menu.addMenu("🛠 Toolse")
         tools_menu.setStyleSheet(self.MENU_STYLE)
         all_actions = self.action_registry.get_action_list()
 
         categories_map = {
             "Tween": tools_menu.addMenu("⚖️ Tween"),
             "Temp Controls": tools_menu.addMenu("⚡ Temp Controls"),
-            "Pose": tools_menu.addMenu("🧘 Pose"),
-            "Animation": tools_menu.addMenu("🎬 Animation"),
-            "Bake": tools_menu.addMenu("🎯 Bake")
+            "Pose": tools_menu.addMenu("🧘 Poses"),
+            "Animation": tools_menu.addMenu("🎬 Animatione"),
+            "Bake": tools_menu.addMenu("🎯 Bakes")
         }
 
         for sub in categories_map.values():
@@ -633,22 +632,22 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         tools_menu.addSeparator()
-        for direct_id, direct_title in [("smart_euler", "💫 Smart Euler"), ("temp_offset_toggle", "⏱ Offset"), ("trail_toggle", "🎨 Motion Trail")]:
+        for direct_id, direct_title in [("temp_offset_toggle", "⏱ Offset"), ("trail_toggle", "🎨 Motion Traile")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         tools_menu.addSeparator()
-        for direct_id, direct_title in [("scan_rig", "🔍 Scan Rig"), ("default_pose", "🔄 Default Pose")]:
+        for direct_id, direct_title in [("scan_rig", "🔍 Scan Rigs"), ("default_pose", "🔄 Default Poses")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         menu.addSeparator()
-        action_save_preset = menu.addAction("💾 Save Preset")
-        action_open_preset = menu.addAction("📂 Open Preset")
+        action_save_preset = menu.addAction("💾 Save Presets")
+        action_open_preset = menu.addAction("📂 Open Presets")
 
         chosen = menu.exec_(self.mapToGlobal(pos))
 
