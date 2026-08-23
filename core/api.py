@@ -20,6 +20,9 @@ def _get_engine(engine_name):
         elif engine_name == "temp_aim_engine":
             from DooAnimKit.core.temp_aim import TempAimEngine
             _global_instances[engine_name] = TempAimEngine()
+        elif engine_name == "temp_ik_mgr":
+            from DooAnimKit.core.temp_ik import TempIKManager
+            _global_instances[engine_name] = TempIKManager()
         elif engine_name == "trail_mgr":
             from DooAnimKit.core.motion_trail import MotionTrailManager
             _global_instances[engine_name] = MotionTrailManager()
@@ -32,14 +35,7 @@ def _get_engine(engine_name):
     return _global_instances[engine_name]
 
 
-# --- SMART EULER FILTER ---
-
-def apply_smart_euler():
-    """Applies Quaternion-based Smart Euler Filter to resolve Gimbal Lock flips."""
-    _get_engine("euler_filter").apply_smart_filter()
-
-
-# --- TWEEN & SNAP ENGINE (HOTKEYS) ---
+# --- TWEEN ENGINE (HOTKEYS) ---
 
 def tween_step_left():
     """Nudges keyframe -5% towards previous neighbor."""
@@ -49,20 +45,12 @@ def tween_step_right():
     """Nudges keyframe +5% towards next neighbor."""
     _get_engine("tween_engine").step_nudge(direction=1, step_percent=5.0)
 
-def tween_snap_left():
-    """Instantly matches 100% pose of the previous keyframe (Hold Left)."""
-    _get_engine("tween_engine").snap_to_neighbor(direction=-1)
-
-def tween_snap_right():
-    """Instantly matches 100% pose of the next keyframe (Hold Right)."""
-    _get_engine("tween_engine").snap_to_neighbor(direction=1)
-
 def tween_breakdown_50():
     """Snaps to exact 50% midpoint breakdown."""
     _get_engine("tween_engine").tween_absolute(percentage=50.0)
 
 
-# --- TEMP CONTROLS & AIM ---
+# --- TEMP CONTROLS, AIM & IK ---
 
 def create_smart():
     _get_engine("temp_ctrl_mgr").create_smart()
@@ -82,6 +70,9 @@ def create_temp_aim():
     if aim_eng.create_setup():
         hud = ViewportAimHUD(aim_eng)
         hud.show()
+
+def create_temp_ik():
+    _get_engine("temp_ik_mgr").create_temp_ik()
 
 
 # --- POSE & ANIMATION ---
@@ -104,6 +95,9 @@ def paste_animation():
 def mirror_animation():
     _get_engine("pose_mirror_engine").smart_mirror_animation()
 
+def smart_euler_filter():
+    _get_engine("euler_filter").apply_filter()
+
 def scan_rig():
     _get_engine("pose_mirror_engine").scan_selected_rig()
 
@@ -120,10 +114,13 @@ def bake_selected():
         return
     aim_eng = _get_engine("temp_aim_engine")
     if not aim_eng.bake_selected(sel):
-        _get_engine("temp_ctrl_mgr").bake_selected()
+        ik_eng = _get_engine("temp_ik_mgr")
+        if not ik_eng.bake_selected(sel):
+            _get_engine("temp_ctrl_mgr").bake_selected()
 
 def bake_all():
     _get_engine("temp_aim_engine").bake_all()
+    _get_engine("temp_ik_mgr").bake_all()
     _get_engine("temp_ctrl_mgr").bake_back_all()
 
 def toggle_bake_sampling():
