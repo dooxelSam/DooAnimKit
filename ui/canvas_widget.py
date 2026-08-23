@@ -640,14 +640,19 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             return
 
         # 3. Canvas General Context Menu
+        action_add_pin = menu.addAction("📍 Add Pin")
         menu.addSeparator()
 
+        tools_menu = menu.addMenu("🛠 Tools")
         tools_menu.setStyleSheet(self.MENU_STYLE)
         all_actions = self.action_registry.get_action_list()
 
         categories_map = {
             "Tween": tools_menu.addMenu("⚖️ Tween"),
             "Temp Controls": tools_menu.addMenu("⚡ Temp Controls"),
+            "Pose": tools_menu.addMenu("🧘 Pose"),
+            "Animation": tools_menu.addMenu("🎬 Animation"),
+            "Bake": tools_menu.addMenu("🎯 Bake")
         }
 
         for sub in categories_map.values():
@@ -660,18 +665,22 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         tools_menu.addSeparator()
+        for direct_id, direct_title in [("temp_offset_toggle", "⏱ Offset"), ("trail_toggle", "🎨 Motion Trail")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         tools_menu.addSeparator()
+        for direct_id, direct_title in [("scan_rig", "🔍 Scan Rig"), ("default_pose", "🔄 Default Pose")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         menu.addSeparator()
+        action_save_preset = menu.addAction("💾 Save Preset")
+        action_open_preset = menu.addAction("📂 Open Preset")
 
         chosen = menu.exec_(self.mapToGlobal(pos))
 
