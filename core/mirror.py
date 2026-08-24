@@ -8,14 +8,20 @@ from DooAnimKit.core.context import UndoContext
 
 class PoseMirrorEngine:
     """
-    Handles Pose & Animation Copy, Paste, Smart Mirror/Flip, and Default Pose.
-    Persists copied data to disk (JSON) to allow sharing between multiple Maya instances.
+    Handles Pose & Animation Copy, Paste, Smart Mirror/Flip, Default Pose,
+    and Dynamic Rig Anatomy Validation.
     """
 
     CHANNELS = [
         "translateX", "translateY", "translateZ",
         "rotateX", "rotateY", "rotateZ",
         "scaleX", "scaleY", "scaleZ"
+    ]
+
+    CORE_ANATOMY = [
+        "Main_Root", "Hips",
+        "LeftShoulder", "RightShoulder",
+        "LeftForeArm", "RightForeArm"
     ]
 
     def __init__(self):
@@ -27,11 +33,10 @@ class PoseMirrorEngine:
         self.copied_anim = {}
         self.symmetry_table = {}
         self.default_pose = {}
-
-    # --- DISK PERSISTENCE (CROSS-MAYA BUFFER) ---
+        self.is_rig_scanned = False
+        self.is_manually_locked = False
 
     def _save_json(self, file_path, data):
-        """Saves dictionary data to disk for cross-instance access."""
         try:
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -41,7 +46,6 @@ class PoseMirrorEngine:
             return False
 
     def _load_json(self, file_path):
-        """Loads dictionary data from disk if available."""
         if not os.path.exists(file_path):
             return None
         try:
@@ -51,10 +55,7 @@ class PoseMirrorEngine:
             cmds.warning(f"Failed to read clipboard buffer: {e}")
             return None
 
-    # --- TIME RANGE & UTILS ---
-
     def _get_time_range(self):
-        """Returns active timeline highlight range, or scene playback min/max."""
         gPlayBackSlider = mel.eval('$tmpVar=$gPlayBackSlider;')
         time_range = cmds.timeControl(gPlayBackSlider, query=True, rangeArray=True)
         if time_range and (time_range[1] - time_range[0] > 1):
@@ -64,11 +65,9 @@ class PoseMirrorEngine:
         return start, end
 
     def _clean_name(self, name):
-        """Strips namespace and path delimiters to allow matching across scenes."""
         return name.split(":")[-1].split("|")[-1]
 
     def _get_opposite_name(self, name):
-        """Finds opposite control name based on standard naming conventions."""
         patterns = [
             ("L_", "R_"), ("_L", "_R"),
             ("Left", "Right"), ("left", "right"),
@@ -87,7 +86,6 @@ class PoseMirrorEngine:
         return None
 
     def _get_partner(self, ctrl):
-        """Retrieves symmetry partner or dynamically maps opposite name."""
         partner = self.symmetry_table.get(ctrl)
         if not partner or not cmds.objExists(partner):
             partner = self._get_opposite_name(ctrl)
@@ -96,9 +94,8 @@ class PoseMirrorEngine:
         return partner
 
     def _is_fk_control(self, ctrl):
-        """Detects whether a controller is an FK chain component."""
         name_lower = ctrl.lower()
-        if "fk" in name_lower or "finger" in name_lower or "thumb" in name_lower:
+        if "fk" in name_lower or "finger" in name_lower or "thumb" in name_lower or "scapula" in name_lower or "shoulder" in name_lower or "elbow" in name_lower:
             return True
         tx_settable = cmds.attributeQuery("translateX", node=ctrl, exists=True) and cmds.getAttr(f"{ctrl}.translateX", settable=True)
         rx_settable = cmds.attributeQuery("rotateX", node=ctrl, exists=True) and cmds.getAttr(f"{ctrl}.rotateX", settable=True)
@@ -107,15 +104,12 @@ class PoseMirrorEngine:
         return False
 
     def _calculate_mirror_value(self, ctrl, attr, val):
-        """Calculates value sign based on IK vs FK mirroring behavior."""
         if self._is_fk_control(ctrl):
             return val
         else:
             if attr in ("translateX", "rotateY", "rotateZ"):
                 return -val
             return val
-
-    # --- POSE CORE ---
 
     def _read_transforms(self, ctrl):
         data = {}
@@ -130,14 +124,12 @@ class PoseMirrorEngine:
         for attr, val in data.items():
             full_attr = f"{ctrl}.{attr}"
             if cmds.attributeQuery(attr, node=ctrl, exists=True):
-                if cmds.getAttr(full_attr, settable=True):
+                if cmds.getAttr(full_attr, settable=True) and not cmds.getAttr(full_attr, lock=True):
                     final_val = self._calculate_mirror_value(ctrl, attr, val) if mirror_mode else val
                     try:
                         cmds.setAttr(full_attr, final_val)
                     except Exception:
                         pass
-
-    # --- ANIMATION CORE ---
 
     def _read_animation(self, ctrl, start_frame, end_frame):
         anim_data = {}
@@ -151,12 +143,7 @@ class PoseMirrorEngine:
                         val = cmds.keyframe(full_attr, query=True, time=(t, t), valueChange=True)[0]
                         in_tan = cmds.keyTangent(full_attr, query=True, time=(t, t), inTangentType=True)[0]
                         out_tan = cmds.keyTangent(full_attr, query=True, time=(t, t), outTangentType=True)[0]
-                        keys_list.append({
-                            "time": t,
-                            "val": val,
-                            "in_tan": in_tan,
-                            "out_tan": out_tan
-                        })
+                        keys_list.append({"time": t, "val": val, "in_tan": in_tan, "out_tan": out_tan})
                     anim_data[attr] = keys_list
         return anim_data
 
@@ -164,7 +151,7 @@ class PoseMirrorEngine:
         for attr, keys in anim_data.items():
             full_attr = f"{ctrl}.{attr}"
             if cmds.attributeQuery(attr, node=ctrl, exists=True):
-                if cmds.getAttr(full_attr, settable=True):
+                if cmds.getAttr(full_attr, settable=True) and not cmds.getAttr(full_attr, lock=True):
                     cmds.cutKey(full_attr, time=(start_frame, end_frame))
                     for k in keys:
                         t = k["time"]
@@ -175,16 +162,14 @@ class PoseMirrorEngine:
                         except Exception:
                             pass
 
-    # --- RIG SCAN & DEFAULT POSE ---
-
     def scan_selected_rig(self):
         sel = cmds.ls(selection=True, type="transform") or []
         if not sel:
-            all_ctrls = cmds.ls("*_CTRL*", "*_ctrl*", "*_Ctrl*", "*_CTL*", type="transform") or []
+            all_ctrls = cmds.ls("*_CTRL*", "*_ctrl*", "*_Ctrl*", "*_CTL*", "*_ctl*", "*FK*", "*IK*", "*Roll*", "*Main*", "*Root*", type="transform") or []
             sel = [c for c in all_ctrls if not cmds.listRelatives(c, shapes=True, type="camera")]
 
         if not sel:
-            cmds.warning("Please select controllers to scan rig symmetry!")
+            cmds.warning("Please select controllers to scan rig symmetry & default pose!")
             return False
 
         self.symmetry_table.clear()
@@ -196,7 +181,51 @@ class PoseMirrorEngine:
                 partner = self._get_opposite_name(ctrl)
                 self.symmetry_table[ctrl] = partner if partner else ctrl
 
-        cmds.inViewMessage(amg=f"Rig scanned: <hl>{len(sel)}</hl> controls mapped.", pos="topCenter", fade=True)
+        self.is_rig_scanned = True
+        return True
+
+    def validate_pins_anatomy(self, pins_list):
+        """Strict validation: checks core limbs, spine, and leg chains (FK or IK)."""
+        if not self.is_rig_scanned and not self.default_pose:
+            return "UNINITIALIZED", self.CORE_ANATOMY
+
+        assigned_tags = set([p.get("hik_tag") for p in pins_list if p.get("hik_tag") and p.get("hik_tag") != "None"])
+        missing = [tag for tag in self.CORE_ANATOMY if tag not in assigned_tags]
+
+        # 1. Перевірка хребта
+        has_spine = any("Spine" in t or t == "Chest" for t in assigned_tags)
+        if not has_spine:
+            missing.append("Spine")
+
+        # 2. Перевірка ніг (або IK, або FK)
+        has_left_leg = ("LeftFoot_IK" in assigned_tags) or ("LeftFoot" in assigned_tags and "LeftUpLeg" in assigned_tags)
+        has_right_leg = ("RightFoot_IK" in assigned_tags) or ("RightFoot" in assigned_tags and "RightUpLeg" in assigned_tags)
+
+        if not has_left_leg:
+            missing.append("Left Leg (IK or FK)")
+        if not has_right_leg:
+            missing.append("Right Leg (IK or FK)")
+
+        if not missing:
+            return "READY", []
+        else:
+            self.is_manually_locked = False
+            return "PARTIAL", missing
+
+    def toggle_manual_lock(self, pins_list):
+        if not self.is_rig_scanned and not self.default_pose:
+            cmds.warning("Please Run 'Scan Rig' in Default Pose first!")
+            return False
+
+        status, missing = self.validate_pins_anatomy(pins_list)
+        if missing:
+            cmds.warning(f"Cannot Lock Rig! Missing essential tags: {', '.join(missing)}")
+            self.is_manually_locked = False
+            return False
+
+        self.is_manually_locked = not self.is_manually_locked
+        status_msg = "LOCKED & READY" if self.is_manually_locked else "UNLOCKED (Edit Mode)"
+        cmds.inViewMessage(amg=f"Rig Status: <hl>{status_msg}</hl>", pos="topCenter", fade=True)
         return True
 
     def reset_to_default_pose(self):
@@ -215,8 +244,6 @@ class PoseMirrorEngine:
         cmds.inViewMessage(amg=f"Reset <hl>{len(targets)}</hl> controls to Default Pose.", pos="topCenter", fade=True)
         return True
 
-    # --- POSE COPY / PASTE (CROSS-SCENE / CROSS-MAYA) ---
-
     def copy_pose(self):
         sel = cmds.ls(selection=True, type="transform") or []
         if not sel:
@@ -224,19 +251,16 @@ class PoseMirrorEngine:
             return False
 
         self.copied_pose.clear()
-        # Save both full name and clean name (without namespaces)
         for ctrl in sel:
             data = self._read_transforms(ctrl)
             self.copied_pose[ctrl] = data
             self.copied_pose[self._clean_name(ctrl)] = data
 
         self._save_json(self.pose_file, self.copied_pose)
-
-        cmds.inViewMessage(amg=f"Copied pose for <hl>{len(sel)}</hl> controls (Saved to Buffer).", pos="topCenter", fade=True)
+        cmds.inViewMessage(amg=f"Copied pose for <hl>{len(sel)}</hl> controls.", pos="topCenter", fade=True)
         return True
 
     def paste_pose(self):
-        # Reload latest buffer from disk (in case it was copied in another Maya)
         disk_data = self._load_json(self.pose_file)
         if disk_data:
             self.copied_pose = disk_data
@@ -262,8 +286,6 @@ class PoseMirrorEngine:
         cmds.inViewMessage(amg=f"Pasted pose onto <hl>{applied_count}</hl> controls.", pos="topCenter", fade=True)
         return True
 
-    # --- ANIMATION COPY / PASTE (CROSS-SCENE / CROSS-MAYA) ---
-
     def copy_animation(self):
         sel = cmds.ls(selection=True, type="transform") or []
         if not sel:
@@ -282,22 +304,13 @@ class PoseMirrorEngine:
                 self.copied_anim[clean] = data
                 count += 1
 
-        # Package data with time metadata
-        payload = {
-            "start_frame": start_frame,
-            "end_frame": end_frame,
-            "data": self.copied_anim
-        }
+        payload = {"start_frame": start_frame, "end_frame": end_frame, "data": self.copied_anim}
         self._save_json(self.anim_file, payload)
 
-        cmds.inViewMessage(
-            amg=f"Copied animation for <hl>{count}</hl> controls ({start_frame}..{end_frame}).",
-            pos="topCenter", fade=True
-        )
+        cmds.inViewMessage(amg=f"Copied animation for <hl>{count}</hl> controls ({start_frame}..{end_frame}).", pos="topCenter", fade=True)
         return True
 
     def paste_animation(self):
-        # Reload latest buffer from disk
         payload = self._load_json(self.anim_file)
         if payload and "data" in payload:
             self.copied_anim = payload["data"]
@@ -328,13 +341,8 @@ class PoseMirrorEngine:
                     self._apply_animation(ctrl, data, start_frame, end_frame, mirror_mode=False)
                     applied_count += 1
 
-        cmds.inViewMessage(
-            amg=f"Pasted animation onto <hl>{applied_count}</hl> controls ({start_frame}..{end_frame}).",
-            pos="topCenter", fade=True
-        )
+        cmds.inViewMessage(amg=f"Pasted animation onto <hl>{applied_count}</hl> controls ({start_frame}..{end_frame}).", pos="topCenter", fade=True)
         return True
-
-    # --- SMART MIRROR / FLIP (POSE & ANIMATION) ---
 
     def smart_mirror_pose(self):
         sel = cmds.ls(selection=True, type="transform") or []

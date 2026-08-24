@@ -12,14 +12,12 @@ from DooAnimKit.core.temp_ik import TempIKManager
 from DooAnimKit.core.motion_trail import MotionTrailManager
 from DooAnimKit.core.tween_engine import TweenEngine
 from DooAnimKit.core.euler_filter import SmartEulerFilter
-from DooAnimKit.core.time_shift import TimeShiftEngine
+from DooAnimKit.core.semantic_pose import SemanticPoseEngine
 from DooAnimKit.core.action_registry import ActionRegistry
 from DooAnimKit.ui.canvas_widget import SpatialActionCanvas
 
 
 class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
-    """Main single-window Hub for DooAnimKit with responsive proportional scaling."""
-
     UI_NAME = "DooAnimKitHubWindow"
 
     def __init__(self, parent=None):
@@ -27,7 +25,7 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         self.setObjectName(self.UI_NAME)
         self.setWindowTitle("DooAnimKit — Spatial Hub")
 
-        # Core Engines
+        # 1. Core Engines
         self.temp_ctrl_mgr = TempControlManager()
         self.pose_mirror_engine = PoseMirrorEngine()
         self.temp_aim_engine = TempAimEngine()
@@ -35,9 +33,9 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         self.trail_mgr = MotionTrailManager()
         self.tween_engine = TweenEngine()
         self.euler_filter = SmartEulerFilter()
-        self.time_shift_engine = TimeShiftEngine()
+        self.semantic_pose_engine = SemanticPoseEngine(self)
 
-        # Action Registry & HUD Reference
+        # 2. Action Registry & Popups
         self.action_registry = ActionRegistry(self)
         self.aim_window = None
 
@@ -48,7 +46,7 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        # Quick Toolbar
+        # Top Bar
         top_bar = QtWidgets.QHBoxLayout()
         btn_paste = QtWidgets.QPushButton("📋 Paste Screenshot (Win+Shift+S)")
         btn_paste.setFixedHeight(28)
@@ -72,14 +70,14 @@ class DooAnimKitHubWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         self.offset_banner.setVisible(False)
         layout.addWidget(self.offset_banner)
 
-        # Interactive Canvas
+        # Canvas
         self.canvas = SpatialActionCanvas(self)
         btn_paste.clicked.connect(self.canvas.paste_image_from_clipboard)
         btn_clear.clicked.connect(self.canvas.clear_all)
         layout.addWidget(self.canvas)
 
-        # Tip Footer
-        tip = QtWidgets.QLabel("RMB: Menu / Tools | Ctrl + Left Drag: Move Button/Pin")
+        # Footer Tip
+        tip = QtWidgets.QLabel("RMB: Tools Menu | Ctrl + Drag: Move | Scan Rig in T-Pose first")
         tip.setStyleSheet("color: #888888; font-size: 10px;")
         tip.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(tip)
