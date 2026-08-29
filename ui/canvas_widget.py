@@ -13,55 +13,33 @@ import maya.mel as mel
 
 class SpatialActionCanvas(QtWidgets.QWidget):
     """
-    Interactive canvas with AnimBot sliders, accurate HIK tag mapping,
-    clear checkmarks for active tags, and clickable Rig Lock Badge.
+    Interactive canvas with AnimBot-style real-time interactive Sliders,
+    persistent Rig Validation Badge, discrete step dots, and structured submenus.
     """
 
     PIN_RADIUS = 9
 
     TICK_OFFSETS = [
-        (-0.85, 50.0, "-50%"),
-        (-0.58, 20.0, "-20%"),
-        (-0.30, 5.0, "-5%"),
-        (0.30, 5.0, "+5%"),
-        (0.58, 20.0, "+20%"),
-        (0.85, 50.0, "+50%")
+        (-0.86, 50.0, "-50%"),
+        (-0.60, 20.0, "-20%"),
+        (-0.34, 5.0, "-5%"),
+        (0.34, 5.0, "+5%"),
+        (0.60, 20.0, "+20%"),
+        (0.86, 50.0, "+50%")
     ]
 
     HIK_TAGS_MAP = {
-        "Root & Pelvis": [
-            "Main_Root", "Hips"
-        ],
-        "Spine & Head": [
-            "Spine1", "Spine2", "Spine3", "Spine4", "Spine5", "Chest", "Neck", "Head"
-        ],
-        "Left Leg (IK)": [
-            "LeftLeg_IK", "LeftKnee_Pole", "LeftToes_IK"
-        ],
-        "Left Leg (FK Chain)": [
-            "LeftUpLeg_FK", "LeftKnee_FK", "LeftFoot_FK", "LeftToes_FK"
-        ],
-        "Right Leg (IK)": [
-            "RightLeg_IK", "RightKnee_Pole", "RightToes_IK"
-        ],
-        "Right Leg (FK Chain)": [
-            "RightUpLeg_FK", "RightKnee_FK", "RightFoot_FK", "RightToes_FK"
-        ],
-        "Left Arm (FK)": [
-            "LeftClavicle", "LeftShoulder_FK", "LeftElbow_FK", "LeftWrist_FK", "LeftFingers_FK"
-        ],
-        "Left Arm (IK)": [
-            "LeftHand_IK", "LeftElbow_Pole"
-        ],
-        "Right Arm (FK)": [
-            "RightClavicle", "RightShoulder_FK", "RightElbow_FK", "RightWrist_FK", "RightFingers_FK"
-        ],
-        "Right Arm (IK)": [
-            "RightHand_IK", "RightElbow_Pole"
-        ],
-        "Props & Weapon": [
-            "Weapon_R", "Weapon_L", "Prop_Main"
-        ]
+        "Root & Pelvis": ["Main_Root", "Hips"],
+        "Spine & Head": ["Spine1", "Spine2", "Spine3", "Spine4", "Spine5", "Chest", "Neck", "Head"],
+        "Left Arm (FK)": ["LeftClavicle", "LeftShoulder_FK", "LeftElbow_FK", "LeftWrist_FK", "LeftFingers_FK"],
+        "Left Arm (IK)": ["LeftHand_IK", "LeftElbow_Pole"],
+        "Right Arm (FK)": ["RightClavicle", "RightShoulder_FK", "RightElbow_FK", "RightWrist_FK", "RightFingers_FK"],
+        "Right Arm (IK)": ["RightHand_IK", "RightElbow_Pole"],
+        "Left Leg (FK Chain)": ["LeftUpLeg_FK", "LeftKnee_FK", "LeftFoot_FK", "LeftToes_FK"],
+        "Left Leg (IK)": ["LeftLeg_IK", "LeftKnee_Pole", "LeftToes_IK"],
+        "Right Leg (FK Chain)": ["RightUpLeg_FK", "RightKnee_FK", "RightFoot_FK", "RightToes_FK"],
+        "Right Leg (IK)": ["RightLeg_IK", "RightKnee_Pole", "RightToes_IK"],
+        "Props & Weapon": ["Weapon_R", "Weapon_L", "Prop_Main"]
     }
 
     MENU_STYLE = """
@@ -75,7 +53,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             font-weight: 500;
         }
         QMenu::item {
-            padding: 5px 22px 5px 10px;
+            padding: 6px 36px 6px 14px;
             border-radius: 4px;
             margin: 1px 2px;
         }
@@ -101,7 +79,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             border-radius: 3px;
         }
         QMenu::right-arrow {
-            margin-right: 6px;
+            margin-right: 8px;
         }
     """
 
@@ -184,10 +162,10 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     for b in self.buttons:
                         b["w"] = self._calc_button_width(b.get("label", "Action"))
                     for s in self.sliders:
-                        if s.get("w", 0) < 210:
-                            s["w"] = 210
+                        if s.get("w", 0) < 200:
+                            s["w"] = 200
                     for p in self.pins:
-                        if "hik_tag" not in p or p["hik_tag"] == "Spine":
+                        if "hik_tag" not in p or p["hik_tag"] in ("None", "Spine"):
                             p["hik_tag"] = self._guess_hik_tag(p.get("name", ""))
             except Exception:
                 self.pins, self.buttons, self.sliders = [], [], []
@@ -216,7 +194,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         if "spine" in n:
             return "Spine1"
 
-        # Arms
         if "scapula" in n or "clavicle" in n:
             return "LeftClavicle" if is_l else "RightClavicle"
         if "shoulder" in n or ("arm" in n and "forearm" not in n and "elbow" not in n):
@@ -232,7 +209,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 return "LeftHand_IK" if is_l else "RightHand_IK"
             return "LeftWrist_FK" if is_l else "RightWrist_FK"
 
-        # Legs
         if "pole" in n or ("knee" in n and is_ik):
             return "LeftKnee_Pole" if is_l else "RightKnee_Pole"
         if "knee" in n:
@@ -265,7 +241,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         cb = QtWidgets.QApplication.clipboard()
         mime = cb.mimeData()
         if mime.hasImage():
-            self.pixmap = cb.mimeData().imageData() if hasattr(mime, "imageData") else cb.pixmap()
+            self.pixmap = cb.pixmap()
             self.save_state()
             self.updateGeometry()
             self.update()
@@ -316,8 +292,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     for b in self.buttons:
                         b["w"] = self._calc_button_width(b.get("label", "Action"))
                     for s in self.sliders:
-                        if s.get("w", 0) < 210:
-                            s["w"] = 210
+                        if s.get("w", 0) < 200:
+                            s["w"] = 200
                 img_file = file_path.replace(".json", "_img.png")
                 self.pixmap = QtGui.QPixmap(img_file) if os.path.exists(img_file) else None
                 self.save_state()
@@ -326,41 +302,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 cmds.inViewMessage(amg="Preset loaded successfully!", pos="topCenter", fade=True)
             except Exception as e:
                 cmds.warning(f"Failed to load preset: {e}")
-
-    def register_action_to_maya_hotkeys(self, action_id, label="Action"):
-        cmd_name = f"DooAnim_{action_id}"
-        name_cmd_name = f"{cmd_name}NameCommand"
-        python_code = f"import DooAnimKit; DooAnimKit.api.{action_id}()"
-
-        if cmds.runTimeCommand(cmd_name, exists=True):
-            cmds.runTimeCommand(cmd_name, edit=True, delete=True)
-
-        cmds.runTimeCommand(
-            cmd_name,
-            category="DooAnimKit",
-            commandLanguage="python",
-            command=python_code,
-            annotation=f"DooAnimKit: {label}"
-        )
-
-        cmds.nameCommand(
-            name_cmd_name,
-            annotation=f"DooAnimKit: {label}",
-            command=cmd_name
-        )
-
-        try:
-            mel.eval("HotkeyPreferencesWindow;")
-        except Exception:
-            try:
-                mel.eval("hotkeyEditor;")
-            except Exception as e:
-                cmds.warning(f"Could not open Hotkey Editor automatically: {e}")
-
-        cmds.inViewMessage(
-            amg=f"Command <hl>{cmd_name}</hl> ready! Assign key in Category: <hl>'DooAnimKit'</hl>.",
-            pos="topCenter", fade=True
-        )
 
     def _get_image_rect(self):
         if not self.pixmap or self.pixmap.isNull():
@@ -388,7 +329,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         return QtCore.QRect(draw_x, draw_y, max(1, draw_w), max(1, draw_h))
 
     def _get_badge_rect(self, img_rect):
-        return QtCore.QRect(img_rect.x() + 8, img_rect.y() + 8, 185, 24)
+        return QtCore.QRect(img_rect.x() + 8, img_rect.y() + 8, 180, 24)
 
     def _get_btn_rect(self, btn, img_rect):
         bx = img_rect.x() + int(btn["u"] * img_rect.width())
@@ -399,12 +340,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
     def _get_slider_rect(self, sld, img_rect):
         sx = img_rect.x() + int(sld["u"] * img_rect.width())
         sy = img_rect.y() + int(sld["v"] * img_rect.height())
-        sw = max(210, sld.get("w", 210))
+        sw = max(200, sld.get("w", 200))
         sh = sld.get("h", 24)
         return QtCore.QRect(sx, sy, sw, sh)
 
     def _get_slider_center_btn_rect(self, sld_rect, val=0.0):
-        btn_w = 32
+        btn_w = 34
         max_shift = (sld_rect.width() // 2) - (btn_w // 2) - 3
         mid_x = sld_rect.center().x() + int(val * max_shift)
         return QtCore.QRect(mid_x - btn_w // 2, sld_rect.y(), btn_w, sld_rect.height())
@@ -445,19 +386,19 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         bake_keys_only = getattr(self.main_window.temp_ctrl_mgr, "bake_keys_only", True)
         is_scanned = getattr(self.main_window.pose_mirror_engine, "is_rig_scanned", False)
 
-        # Status Badge
+        # 0. Постійний індикатор статусу (Rig Status Badge)
         status_code, missing_tags = self.main_window.pose_mirror_engine.validate_pins_anatomy(self.pins)
         badge_rect = self._get_badge_rect(img_rect)
 
         if status_code == "READY":
             b_color = QtGui.QColor("#2E7D32")
-            b_text = "🔒 HIK LOCKED & READY"
+            b_text = "LOCK HIK LOCKED & READY"
         elif status_code == "PARTIAL":
             b_color = QtGui.QColor("#E65100")
-            b_text = f"⚠️ PARTIAL (Missing {len(missing_tags)})"
+            b_text = f"PARTIAL (Missing {len(missing_tags)})"
         else:
             b_color = QtGui.QColor("#C62828")
-            b_text = "🔓 UNINITIALIZED"
+            b_text = "UNINITIALIZED"
 
         painter.setBrush(QtGui.QBrush(b_color))
         painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 220), 1.2))
@@ -475,14 +416,17 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             srect = self._get_slider_rect(sld, img_rect)
             val = sld.get("val", 0.0)
 
+            # Track
             painter.setBrush(QtGui.QBrush(QtGui.QColor("#1a1e26")))
             painter.setPen(QtGui.QPen(QtGui.QColor("#37474f"), 1.2))
             painter.drawRoundedRect(srect, 4, 4)
 
+            # Center line
             mid_x = srect.center().x()
             painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 40), 1, QtCore.Qt.DashLine))
             painter.drawLine(mid_x, srect.y() + 3, mid_x, srect.bottom() - 3)
 
+            # Active fill
             if abs(val) > 0.02:
                 handle_rect = self._get_slider_center_btn_rect(srect, val)
                 hx = handle_rect.center().x()
@@ -492,11 +436,13 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 painter.setPen(QtCore.Qt.NoPen)
                 painter.drawRoundedRect(fill_rect, 2, 2)
 
+            # Tick Dots
             for tx, ty, pct, label in self._get_tick_points(srect):
                 painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 200)))
                 painter.setPen(QtCore.Qt.NoPen)
                 painter.drawEllipse(QtCore.QPoint(tx, ty), 2, 2)
 
+            # Center Handle
             c_rect = self._get_slider_center_btn_rect(srect, val)
             action_id = sld.get("action_id", "tween_mid_50")
 
@@ -520,7 +466,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             else:
                 painter.drawText(c_rect, QtCore.Qt.AlignCenter, sld.get("label", "Tween"))
 
-        # 2. Action Buttons
+        # 2. Buttons
         for btn in self.buttons:
             brect = self._get_btn_rect(btn, img_rect)
             action_id = btn.get("action_id")
@@ -528,11 +474,11 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             if action_id == "temp_offset_toggle" and is_offset_on:
                 bg_col = QtGui.QColor("#E65100")
                 border_pen = QtGui.QPen(QtGui.QColor("#FFCC80"), 2.0)
-                display_label = f"⏱ [ON] {btn.get('label', 'Offset')}"
+                display_label = f"[ON] {btn.get('label', 'Offset')}"
             elif action_id == "toggle_sampling":
                 bg_col = QtGui.QColor("#FB8C00") if bake_keys_only else QtGui.QColor("#455A64")
                 border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
-                display_label = "🎯 Keys" if bake_keys_only else "🎯 All"
+                display_label = "Keys" if bake_keys_only else "All"
             else:
                 bg_col = QtGui.QColor(btn.get("color", "#336699"))
                 border_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 180), 1)
@@ -632,10 +578,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         if event.button() == QtCore.Qt.LeftButton:
             badge_rect = self._get_badge_rect(img_rect)
             if badge_rect.contains(event.pos()):
-                self.main_window.pose_mirror_engine.toggle_manual_lock(self.pins)
+                if hasattr(self.main_window.pose_mirror_engine, "toggle_manual_lock"):
+                    self.main_window.pose_mirror_engine.toggle_manual_lock(self.pins)
                 self.update()
                 return
 
+            # 1. Слайдери
             for sld in reversed(self.sliders):
                 srect = self._get_slider_rect(sld, img_rect)
                 if srect.contains(event.pos()):
@@ -648,28 +596,21 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
                     if not c_rect.contains(event.pos()):
                         for tx, ty, pct, label in self._get_tick_points(srect):
-                            if ((event.pos().x() - tx)**2 + (event.pos().y() - ty)**2)**0.5 <= 7:
+                            if ((event.pos().x() - tx)**2 + (event.pos().y() - ty)**2)**0.5 <= 8:
                                 direction = 1 if tx > srect.center().x() else -1
-                                mode = sld.get("mode", "Tween")
-
-                                if mode == "Tween" and hasattr(self.main_window, "tween_engine"):
+                                if hasattr(self.main_window, "tween_engine"):
                                     self.main_window.tween_engine.step_nudge(direction=direction, step_percent=pct)
-                                elif mode == "Time Shift" and hasattr(self.main_window, "time_shift_engine"):
-                                    offset_f = int(round(pct / 50.0 * 2.0)) or (1 if direction > 0 else -1)
-                                    self.main_window.time_shift_engine.shift_selected(frame_offset=offset_f)
-                                elif mode == "Cascade" and hasattr(self.main_window, "time_shift_engine"):
-                                    step_f = 1 if pct <= 20 else 2
-                                    self.main_window.time_shift_engine.cascade_shift(step=step_f, reverse=(direction < 0))
-
                                 self.update()
                                 return
 
                     self.active_slider_handle = sld
-                    self.is_handle_dragging = False
+                    self.is_handle_dragging = True
                     if hasattr(self.main_window, "tween_engine"):
                         self.slider_cached_state = self.main_window.tween_engine.cache_current_tween_state()
+                    self._update_slider_drag(sld, event.pos(), srect)
                     return
 
+            # 2. Кнопки
             for btn in reversed(self.buttons):
                 brect = self._get_btn_rect(btn, img_rect)
                 if brect.contains(event.pos()):
@@ -682,6 +623,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                         self.update()
                     return
 
+            # 3. Піни
             for pin in reversed(self.pins):
                 px = img_rect.x() + int(pin["u"] * img_rect.width())
                 py = img_rect.y() + int(pin["v"] * img_rect.height())
@@ -700,17 +642,13 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             self.box_current = event.pos()
 
     def _update_slider_drag(self, sld, pos, srect):
-        btn_w = 32
+        btn_w = 34
         max_shift = float((srect.width() // 2) - (btn_w // 2) - 3)
         offset_x = pos.x() - srect.center().x()
         val = max(-1.0, min(1.0, offset_x / max(1.0, max_shift)))
         sld["val"] = val
 
-        if abs(val) > 0.04:
-            self.is_handle_dragging = True
-
-        mode = sld.get("mode", "Tween")
-        if mode == "Tween" and hasattr(self.main_window, "tween_engine"):
+        if hasattr(self.main_window, "tween_engine") and self.slider_cached_state:
             self.main_window.tween_engine.tween_interactive_delta(self.slider_cached_state, val)
         self.update()
 
@@ -748,10 +686,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
     def mouseReleaseEvent(self, event):
         if self.active_slider_handle:
-            if not self.is_handle_dragging:
-                self.action_registry.execute(self.active_slider_handle.get("action_id", "tween_mid_50"))
-                self.main_window.sync_ui_state()
-
             self.active_slider_handle["val"] = 0.0
             self.active_slider_handle = None
             self.is_handle_dragging = False
@@ -834,45 +768,16 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
         if clicked_sld:
             menu.addSection(f"Slider: {clicked_sld.get('label', 'Tween')}")
-            mode_menu = menu.addMenu("🎯 Slider Mode / Action")
-            mode_menu.setStyleSheet(self.MENU_STYLE)
-            modes = [
-                ("Tween: 50% Breakdown", "Tween", "tween_mid_50"),
-                ("Time Shift: Toggle Offset Mode", "Time Shift", "temp_offset_toggle"),
-                ("Cascade: +1f Forward", "Cascade", "cascade_fwd_1"),
-                ("Pose: Snap Left (100%)", "Tween", "tween_snap_left"),
-                ("Pose: Snap Right (100%)", "Tween", "tween_snap_right"),
-            ]
-            mode_actions = {}
-            for title, mode_type, act_id in modes:
-                act = mode_menu.addAction(title)
-                mode_actions[act] = (title, mode_type, act_id)
-
-            action_rename_sld = menu.addAction("✏️ Rename Slider...")
-            action_color_sld = menu.addAction("🎨 Pick Center Color...")
-            menu.addSeparator()
-            action_delete_sld = menu.addAction("🗑 Delete Slider")
+            action_rename_sld = menu.addAction("Rename Slider...")
+            action_delete_sld = menu.addAction("Delete Slider")
 
             chosen = menu.exec_(self.mapToGlobal(pos))
-            if chosen in mode_actions:
-                title, mode_type, act_id = mode_actions[chosen]
-                clicked_sld["mode"] = mode_type
-                clicked_sld["action_id"] = act_id
-                clicked_sld["label"] = title.split(":")[0]
-                self.save_state()
-                self.update()
-            elif chosen == action_rename_sld:
+            if chosen == action_rename_sld:
                 new_lbl, ok = QtWidgets.QInputDialog.getText(
                     self, "Rename Slider", "Enter slider label:", text=clicked_sld.get("label", "")
                 )
                 if ok and new_lbl:
                     clicked_sld["label"] = new_lbl
-                    self.save_state()
-                    self.update()
-            elif chosen == action_color_sld:
-                col = QtWidgets.QColorDialog.getColor(QtGui.QColor(clicked_sld.get("color", "#00838f")), self, "Select Color")
-                if col.isValid():
-                    clicked_sld["color"] = col.name()
                     self.save_state()
                     self.update()
             elif chosen == action_delete_sld:
@@ -890,13 +795,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
         if clicked_btn:
             menu.addSection(f"Button: {clicked_btn.get('label', 'Action')}")
-            action_rename_btn = menu.addAction("✏️ Rename Button...")
-            action_color_btn = menu.addAction("🎨 Pick Custom Color...")
-            action_reset_color_btn = menu.addAction("🔄 Reset Default Color")
-            menu.addSeparator()
-            action_save_hotkey = menu.addAction("⌨️ Save to Hotkeys...")
-            menu.addSeparator()
-            action_delete_btn = menu.addAction("🗑 Delete Button")
+            action_rename_btn = menu.addAction("Rename Button...")
+            action_delete_btn = menu.addAction("Delete Button")
 
             chosen = menu.exec_(self.mapToGlobal(pos))
             if chosen == action_rename_btn:
@@ -908,23 +808,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     clicked_btn["w"] = self._calc_button_width(new_label)
                     self.save_state()
                     self.update()
-            elif chosen == action_color_btn:
-                current_color = clicked_btn.get("color", "#336699")
-                col = QtWidgets.QColorDialog.getColor(QtGui.QColor(current_color), self, "Select Button Color")
-                if col.isValid():
-                    clicked_btn["color"] = col.name()
-                    self.save_state()
-                    self.update()
-            elif chosen == action_reset_color_btn:
-                all_actions = self.action_registry.get_action_list()
-                original_act = next((a for a in all_actions if a["id"] == clicked_btn.get("action_id")), None)
-                clicked_btn["color"] = original_act.get("color", "#336699") if original_act else "#336699"
-                self.save_state()
-                self.update()
-            elif chosen == action_save_hotkey:
-                self.register_action_to_maya_hotkeys(
-                    clicked_btn.get("action_id"), clicked_btn.get("label")
-                )
             elif chosen == action_delete_btn:
                 self.buttons.remove(clicked_btn)
                 self.save_state()
@@ -946,11 +829,11 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
             occupied_tags = {p.get("hik_tag"): p.get("name") for p in self.pins if p != clicked_pin and p.get("hik_tag") and p.get("hik_tag") != "None"}
 
-            hik_menu = menu.addMenu("🏷️ Assign Tag")
+            hik_menu = menu.addMenu("Assign Tag")
             hik_menu.setStyleSheet(self.MENU_STYLE)
             tag_actions = {}
 
-            clear_tag_act = hik_menu.addAction("🚫 Clear / Untag (None)")
+            clear_tag_act = hik_menu.addAction("Clear / Untag (None)")
             tag_actions[clear_tag_act] = "None"
             hik_menu.addSeparator()
 
@@ -958,7 +841,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 cat_sub = hik_menu.addMenu(cat_name)
                 cat_sub.setStyleSheet(self.MENU_STYLE)
                 for t in tag_list:
-                    # Перевіряємо точний збіг або еквівалент без суфікса _FK
                     is_match = (t == current_tag) or (t.replace("_FK", "") == current_tag.replace("_FK", "") and "IK" not in t and "IK" not in current_tag)
 
                     if is_match:
@@ -971,15 +853,15 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                         act = cat_sub.addAction(t)
                         tag_actions[act] = t
 
-            shape_menu = menu.addMenu("🔷 Change Shape")
+            shape_menu = menu.addMenu("Change Shape")
             shape_menu.setStyleSheet(self.MENU_STYLE)
             shapes_list = ["Circle", "Square", "Triangle", "Diamond", "Star"]
             shape_actions = {shape_menu.addAction(s): s for s in shapes_list}
 
-            color_action = menu.addAction("🎨 Pick Custom Color")
-            reset_color_action = menu.addAction("🔄 Reset Default Color")
+            color_action = menu.addAction("Pick Custom Color")
+            reset_color_action = menu.addAction("Reset Default Color")
             menu.addSeparator()
-            delete_pin_action = menu.addAction("🗑 Delete Pin")
+            delete_pin_action = menu.addAction("Delete Pin")
 
             chosen = menu.exec_(self.mapToGlobal(pos))
             if chosen in tag_actions:
@@ -992,7 +874,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.save_state()
                 self.update()
             elif chosen == color_action:
-                col = QtWidgets.QColorDialog.getColor(QtGui.QColor(clicked_pin.get("color", "#2196F3")), self, "Select Pin Color")
+                col = QtWidgets.QColorDialog.getColor(QtGui.QColor(clicked_pin.get("color", "#2196F3")), self, "Select Color")
                 if col.isValid():
                     clicked_pin["color"] = col.name()
                     self.save_state()
@@ -1009,22 +891,23 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # 4. Canvas Context Menu
-        action_add_pin = menu.addAction("📍 Add Pin")
-        action_add_slider = menu.addAction("🎚 Create Slider...")
+        # 4. Canvas Context Menu — ПОВНЕ СТРУКТУРОВАНЕ МЕНЮ
+        action_add_pin = menu.addAction("Add Pin")
+        action_add_slider = menu.addAction("Create Slider...")
         menu.addSeparator()
 
-        tools_menu = menu.addMenu("🛠 Tools")
+        tools_menu = menu.addMenu("Tools")
         tools_menu.setStyleSheet(self.MENU_STYLE)
         all_actions = self.action_registry.get_action_list()
 
+        # Окремі чіткі підпапки в Tools
         categories_map = {
-            "Tween": tools_menu.addMenu("⚖️ Tween"),
-            "Time Shift": tools_menu.addMenu("⏱ Time Shift & Cascade"),
-            "Temp Controls": tools_menu.addMenu("⚡ Temp Controls"),
-            "Pose": tools_menu.addMenu("🧘 Pose"),
-            "Animation": tools_menu.addMenu("🎬 Animation"),
-            "Bake": tools_menu.addMenu("🎯 Bake")
+            "Tween": tools_menu.addMenu("Tween"),
+            "Time Shift": tools_menu.addMenu("Time Shift & Cascade"),
+            "Temp Controls": tools_menu.addMenu("Temp Controls"),
+            "Pose": tools_menu.addMenu("Pose"),
+            "Animation": tools_menu.addMenu("Animation"),
+            "Bake": tools_menu.addMenu("Bake")
         }
 
         for sub in categories_map.values():
@@ -1037,22 +920,22 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         tools_menu.addSeparator()
-        for direct_id, direct_title in [("temp_offset_toggle", "⏱ Global Offset"), ("trail_toggle", "🎨 Motion Trail")]:
+        for direct_id, direct_title in [("temp_offset_toggle", "Global Offset"), ("trail_toggle", "Motion Trail")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         tools_menu.addSeparator()
-        for direct_id, direct_title in [("scan_rig", "🔍 Scan Rig (Validate Skeleton)"), ("default_pose", "🔄 Reset Default Pose")]:
+        for direct_id, direct_title in [("scan_rig", "Scan Rig (Validate Skeleton)"), ("default_pose", "Reset to Default Pose")]:
             act = next((a for a in all_actions if a["id"] == direct_id), None)
             if act:
                 item = tools_menu.addAction(direct_title)
                 item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
 
         menu.addSeparator()
-        action_save_preset = menu.addAction("💾 Save Preset")
-        action_open_preset = menu.addAction("📂 Open Preset")
+        action_save_preset = menu.addAction("Save Preset")
+        action_open_preset = menu.addAction("Open Preset")
 
         chosen = menu.exec_(self.mapToGlobal(pos))
 
@@ -1076,7 +959,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     "action_id": "tween_mid_50",
                     "u": norm_u,
                     "v": norm_v,
-                    "w": 210,
+                    "w": 200,
                     "h": 24,
                     "val": 0.0,
                     "color": "#00838f"
