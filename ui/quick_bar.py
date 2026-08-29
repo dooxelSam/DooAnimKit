@@ -26,7 +26,7 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
         self.slider_data = slider_data
         self.parent_bar = parent_bar
         self.setFixedHeight(26)
-        self.setFixedWidth(190)  # Фіксована компактна ширина як в AnimBot
+        self.setFixedWidth(190)
         self.val = 0.0
         self.active_drag = False
         self.cached_state = {}
@@ -55,16 +55,13 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
         srect = QtCore.QRect(1, 1, self.width() - 2, self.height() - 2)
         mid_x = srect.center().x()
 
-        # Track background
         painter.setBrush(QtGui.QBrush(QtGui.QColor("#1e232b")))
         painter.setPen(QtGui.QPen(QtGui.QColor("#37474f"), 1.0))
         painter.drawRoundedRect(srect, 4, 4)
 
-        # Center line
         painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 35), 1, QtCore.Qt.DashLine))
         painter.drawLine(mid_x, srect.y() + 2, mid_x, srect.bottom() - 2)
 
-        # Active fill bar
         if abs(self.val) > 0.02:
             handle_rect = self._get_slider_center_rect()
             hx = handle_rect.center().x()
@@ -74,20 +71,17 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
             painter.setPen(QtCore.Qt.NoPen)
             painter.drawRoundedRect(fill_rect, 2, 2)
 
-        # Tick points
         for tx, ty, pct, label in self._get_tick_points():
             painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 160)))
             painter.setPen(QtCore.Qt.NoPen)
             painter.drawEllipse(QtCore.QPoint(tx, ty), 2, 2)
 
-        # Center Handle
         c_rect = self._get_slider_center_rect()
         col_color = QtGui.QColor(self.slider_data.get("color", "#00838f"))
         painter.setBrush(QtGui.QBrush(col_color))
         painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 200), 1))
         painter.drawRoundedRect(c_rect, 3, 3)
 
-        # Text
         painter.setPen(QtCore.Qt.white)
         font = painter.font()
         font.setBold(True)
@@ -149,7 +143,7 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
 
 class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
     """
-    AnimBot-style compact toolbar with tight button grouping and no unwanted stretching.
+    AnimBot-style compact toolbar with synchronized button states.
     """
 
     UI_NAME = "DooAnimKitQuickBar"
@@ -192,7 +186,7 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         super(DooAnimKitQuickBar, self).__init__(parent=parent)
         self.setObjectName(self.UI_NAME)
         self.setWindowTitle("DooAnimKit — Toolbar")
-        self.setFixedHeight(34)  # Компактна висота як в AnimBot
+        self.setFixedHeight(34)
         self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -243,7 +237,6 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
             print(f"Failed to save quick bar config: {e}")
 
     def _build_ui(self):
-        # Горизонтальна компактна панель
         self.main_layout = QtWidgets.QHBoxLayout(self)
         self.main_layout.setContentsMargins(4, 2, 4, 2)
         self.main_layout.setSpacing(3)
@@ -258,14 +251,21 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
             if widget:
                 widget.deleteLater()
 
+        from DooAnimKit.core.temp_control import TempControlManager
+        temp_mgr = TempControlManager()
+        is_offset_on = getattr(temp_mgr, "offset_active", False)
+
         for idx, item_data in enumerate(self.items_data):
             if item_data.get("item_type") == "slider":
                 slider = QuickBarSliderWidget(item_data, self)
                 self.main_layout.addWidget(slider)
             else:
                 btn = QtWidgets.QPushButton()
-                btn.setFixedSize(26, 26)  # Акуратний розмір кнопок як в AnimBot
+                btn.setFixedSize(26, 26)
                 btn.setToolTip(item_data.get("label", "Action"))
+
+                action_id = item_data.get("action_id")
+                is_offset_btn = (action_id == "temp_offset_toggle")
 
                 icon_path = item_data.get("icon", "")
                 if icon_path and os.path.exists(icon_path):
@@ -275,11 +275,17 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
                     label_text = item_data.get("label", "A")
                     btn.setText(label_text[:2].upper())
 
-                col_color = item_data.get("color", "#2b2b2b")
+                if is_offset_btn and is_offset_on:
+                    col_color = "#E65100"
+                    border_style = "2px solid #FFCC80"
+                else:
+                    col_color = item_data.get("color", "#2b2b2b")
+                    border_style = "1px solid #3c3c3c"
+
                 btn.setStyleSheet(f"""
                     QPushButton {{
                         background-color: {col_color};
-                        border: 1px solid #3c3c3c;
+                        border: {border_style};
                         border-radius: 4px;
                         color: #eceff1;
                         font-weight: bold;
@@ -294,23 +300,20 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
                     }}
                 """)
 
-                action_id = item_data.get("action_id")
                 btn.clicked.connect(lambda checked=False, aid=action_id: self._execute_action(aid))
                 btn.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
                 btn.customContextMenuRequested.connect(lambda pos, b=btn, i=idx: self._show_btn_menu(pos, b, i))
 
                 self.main_layout.addWidget(btn)
 
-        # Роздільник
         sep = QtWidgets.QFrame()
         sep.setFrameShape(QtWidgets.QFrame.VLine)
         sep.setStyleSheet("color: #37474f; margin: 4px 2px;")
         self.main_layout.addWidget(sep)
 
-        # Кнопка додавання (+)
         add_btn = QtWidgets.QPushButton("+")
         add_btn.setFixedSize(24, 24)
-        add_btn.setToolTip("Add Button or Slider")
+        add_btn.setToolTip("Click: Open Tools Menu | Ctrl + Click on Item: Spawn Button in Toolbar")
         add_btn.setStyleSheet("""
             QPushButton {
                 background-color: #1e222b;
@@ -326,11 +329,16 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
                 border: 1px solid #00e5ff;
             }
         """)
-        add_btn.clicked.connect(self._add_item_dialog)
+        add_btn.clicked.connect(lambda: self._show_tools_add_menu(add_btn.mapToGlobal(QtCore.QPoint(0, add_btn.height()))))
         self.main_layout.addWidget(add_btn)
 
-        # Пружина праворуч, яка блокує розтягування кнопок по ширині
         self.main_layout.addStretch()
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.RightButton:
+            self._show_tools_add_menu(event.globalPos())
+            return
+        super(DooAnimKitQuickBar, self).mousePressEvent(event)
 
     def _execute_action(self, action_id):
         try:
@@ -354,8 +362,114 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
             })()
             registry = ActionRegistry(dummy_win)
             registry.execute(action_id)
+
+            # Оновлюємо вигляд кнопок тулбара та полотна
+            self._populate_items()
+            if hasattr(self.parent(), "sync_ui_state"):
+                self.parent().sync_ui_state()
         except Exception as e:
             cmds.warning(f"Could not execute action {action_id}: {e}")
+
+    def _show_tools_add_menu(self, global_pos):
+        menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet(self.MENU_STYLE)
+
+        act_add_slider = menu.addAction("🎚 Create Slider...")
+        menu.addSeparator()
+
+        all_actions = self._get_registry_action_list()
+
+        categories_map = {
+            "Tween": menu.addMenu("Tween"),
+            "Time Shift": menu.addMenu("Time Shift & Cascade"),
+            "Temp Controls": menu.addMenu("Temp Controls"),
+            "Pose": menu.addMenu("Pose"),
+            "Animation": menu.addMenu("Animation"),
+            "Bake": menu.addMenu("Bake")
+        }
+
+        for sub in categories_map.values():
+            sub.setStyleSheet(self.MENU_STYLE)
+
+        for act in all_actions:
+            cat = act.get("category")
+            if cat in categories_map:
+                item = categories_map[cat].addAction(act["name"])
+                item.setData(act)
+
+        menu.addSeparator()
+        for direct_id, direct_title in [("temp_offset_toggle", "Global Offset"), ("trail_toggle", "Motion Trail")]:
+            act = next((a for a in all_actions if a["id"] == direct_id), None)
+            if act:
+                item = menu.addAction(direct_title)
+                item.setData(act)
+
+        menu.addSeparator()
+        for direct_id, direct_title in [("scan_rig", "Scan Rig (Validate Skeleton)"), ("default_pose", "Reset to Default Pose")]:
+            act = next((a for a in all_actions if a["id"] == direct_id), None)
+            if act:
+                item = menu.addAction(direct_title)
+                item.setData(act)
+
+        chosen = menu.exec_(global_pos)
+        ctrl_held = bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier)
+
+        if chosen == act_add_slider:
+            label, ok = QtWidgets.QInputDialog.getText(self, "Create Slider", "Enter Slider Name:", text="Tween")
+            if ok and label:
+                self.items_data.append({
+                    "item_type": "slider",
+                    "label": label,
+                    "action_id": "tween_mid_50",
+                    "color": "#00838f"
+                })
+                self._save_config()
+                self._populate_items()
+
+        elif chosen and chosen.data():
+            act_data = chosen.data()
+            if ctrl_held:
+                label, ok = QtWidgets.QInputDialog.getText(
+                    self, "Button Name", "Enter button label for Toolbar:", text=act_data.get("name", "Action")
+                )
+                if ok and label:
+                    self.items_data.append({
+                        "item_type": "button",
+                        "label": label,
+                        "action_id": act_data["id"],
+                        "type": "action",
+                        "icon": "",
+                        "color": act_data.get("color", "#336699")
+                    })
+                    self._save_config()
+                    self._populate_items()
+            else:
+                self._execute_action(act_data["id"])
+
+    def _get_registry_action_list(self):
+        try:
+            from DooAnimKit.core.action_registry import ActionRegistry
+            from DooAnimKit.core.temp_control import TempControlManager
+            from DooAnimKit.core.mirror import PoseMirrorEngine
+            from DooAnimKit.core.temp_aim import TempAimEngine
+            from DooAnimKit.core.motion_trail import MotionTrailManager
+            from DooAnimKit.core.euler_filter import SmartEulerFilter
+            from DooAnimKit.core.space_switch import SpaceSwitchEngine
+            from DooAnimKit.core.tween_engine import TweenEngine
+
+            dummy_win = type('Dummy', (object,), {
+                'temp_ctrl_mgr': TempControlManager(),
+                'pose_mirror_engine': PoseMirrorEngine(),
+                'temp_aim_engine': TempAimEngine(),
+                'trail_mgr': MotionTrailManager(),
+                'euler_filter': SmartEulerFilter(),
+                'space_engine': SpaceSwitchEngine(),
+                'tween_engine': TweenEngine()
+            })()
+            registry = ActionRegistry(dummy_win)
+            return registry.get_action_list()
+        except Exception:
+            return []
 
     def _show_slider_menu(self, pos, slider_widget):
         menu = QtWidgets.QMenu(self)
@@ -401,14 +515,14 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         menu.addSection(f"{btn_info.get('label', 'Action')}")
 
         if btn_type == "space":
-            space_menu = menu.addMenu("🌐 Space Targets")
+            space_menu = menu.addMenu("Space Targets")
             space_menu.setStyleSheet(self.MENU_STYLE)
-            act_world = space_menu.addAction("🌍 World Space")
-            act_hip = space_menu.addAction("🦴 Hips / Root")
-            act_chest = space_menu.addAction("👕 Chest")
-            act_custom = space_menu.addAction("🎯 Selected Target Object...")
+            act_world = space_menu.addAction("World Space")
+            act_hip = space_menu.addAction("Hips / Root")
+            act_chest = space_menu.addAction("Chest")
+            act_custom = space_menu.addAction("Selected Target Object...")
             space_menu.addSeparator()
-            act_bake_space = space_menu.addAction("🔥 Bake & Restore Space")
+            act_bake_space = space_menu.addAction("Bake & Restore Space")
 
             from DooAnimKit.core.space_switch import SpaceSwitchEngine
             engine = SpaceSwitchEngine()
@@ -420,22 +534,22 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
             act_bake_space.triggered.connect(engine.bake_and_restore)
 
         elif btn_type == "offset":
-            act_off_on = menu.addAction("⏱ Enable Offset")
-            act_off_off = menu.addAction("⏹ Disable Offset")
+            act_off_on = menu.addAction("Enable Offset")
+            act_off_off = menu.addAction("Disable Offset")
             act_off_on.triggered.connect(lambda: self._set_offset_state(True))
             act_off_off.triggered.connect(lambda: self._set_offset_state(False))
 
         elif btn_type == "pose":
-            menu.addAction("📋 Copy Pose").triggered.connect(lambda: self._execute_action("copy_pose"))
-            menu.addAction("📌 Paste Pose").triggered.connect(lambda: self._execute_action("paste_pose"))
-            menu.addAction("🪞 Smart Mirror / Flip").triggered.connect(lambda: self._execute_action("mirror_pose"))
+            menu.addAction("Copy Pose").triggered.connect(lambda: self._execute_action("copy_pose"))
+            menu.addAction("Paste Pose").triggered.connect(lambda: self._execute_action("paste_pose"))
+            menu.addAction("Smart Mirror / Flip").triggered.connect(lambda: self._execute_action("mirror_pose"))
 
         menu.addSeparator()
-        icon_act = menu.addAction("🖼 Set Custom PNG Icon...")
-        rename_act = menu.addAction("✏️ Rename Tooltip...")
-        color_act = menu.addAction("🎨 Pick Background Color...")
+        icon_act = menu.addAction("Set Custom PNG Icon...")
+        rename_act = menu.addAction("Rename Tooltip...")
+        color_act = menu.addAction("Pick Background Color...")
         menu.addSeparator()
-        del_act = menu.addAction("🗑 Delete Button")
+        del_act = menu.addAction("Delete Button")
 
         chosen = menu.exec_(btn_widget.mapToGlobal(pos))
 
@@ -492,49 +606,4 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         from DooAnimKit.core.temp_control import TempControlManager
         mgr = TempControlManager()
         mgr.set_offset_mode(state)
-
-    def _add_item_dialog(self):
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Add Item to Toolbar")
-        dialog.setFixedWidth(280)
-
-        layout = QtWidgets.QVBoxLayout(dialog)
-        layout.addWidget(QtWidgets.QLabel("Choose Item Type:"))
-
-        type_combo = QtWidgets.QComboBox()
-        type_combo.addItem("🎚 Interactive Slider", "slider")
-        type_combo.addItem("🔘 Action / Space Button", "button")
-        layout.addWidget(type_combo)
-
-        layout.addWidget(QtWidgets.QLabel("Label / Name:"))
-        label_input = QtWidgets.QLineEdit("Tween")
-        layout.addWidget(label_input)
-
-        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        btn_box.accepted.connect(dialog.accept)
-        btn_box.rejected.connect(dialog.reject)
-        layout.addWidget(btn_box)
-
-        if dialog.exec_() == QtWidgets.QDialog.Accepted:
-            item_type = type_combo.currentData()
-            new_label = label_input.text().strip() or "Tween"
-
-            if item_type == "slider":
-                self.items_data.append({
-                    "item_type": "slider",
-                    "label": new_label,
-                    "action_id": "tween_mid_50",
-                    "color": "#00838f"
-                })
-            else:
-                self.items_data.append({
-                    "item_type": "button",
-                    "label": new_label,
-                    "action_id": "tween_mid_50",
-                    "type": "action",
-                    "icon": "",
-                    "color": "#336699"
-                })
-
-            self._save_config()
-            self._populate_items()
+        self._populate_items()

@@ -28,11 +28,25 @@ def get_actual_timeline_track():
 
 
 class TempControlManager:
-    """Universal manager for Temp Controls, Range-Selected Timeline Offset, and Smart Key Sampling."""
+    """
+    Universal manager for Temp Controls, Range-Selected Timeline Offset, 
+    and Smart Key Sampling. Implements Singleton pattern to share offset state across all UI windows.
+    """
 
+    _instance = None
     BAKE_KEYS_ONLY = True
 
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(TempControlManager, cls).__new__(cls, *args, **kwargs)
+            cls._instance._initialized = False
+        return cls._instance
+
     def __init__(self):
+        if getattr(self, "_initialized", False):
+            return
+        self._initialized = True
+
         self.session_data = {}
         self.base_curves_cache = {}
         self.attr_jobs = []
@@ -116,7 +130,7 @@ class TempControlManager:
         points = [
             [xmin, ymin, zmin], [xmax, ymin, zmin], [xmax, ymax, zmin], [xmin, ymax, zmin],
             [xmin, ymin, zmin], [xmin, ymin, zmax], [xmax, ymin, zmax], [xmax, ymax, zmax],
-            [xmin, ymax, zmax], [xmin, ymin, zmax], [xmax, ymin, zmax], [xmax, ymin, zmin],
+            [xmin, ymax, zmax], [xmin, ymin, zmax], [xmax, ymin, zmax], [xmax, ymax, zmin],
             [xmax, ymax, zmin], [xmax, ymax, zmax], [xmin, ymax, zmax], [xmin, ymin, zmin]
         ]
         curve = cmds.curve(degree=1, point=points, knot=list(range(len(points))), name=name)
@@ -156,11 +170,9 @@ class TempControlManager:
         track_widget = get_actual_timeline_track()
 
         if active:
-            # 1. Фіксація виділеного діапазону
             self.offset_range = self._get_active_offset_range()
             start_f, end_f = self.offset_range
 
-            # 2. Неонове зелене підсвічування шкали часу
             if track_widget:
                 track_widget.setStyleSheet("""
                     QWidget {
@@ -181,7 +193,6 @@ class TempControlManager:
             self.base_curves_cache.clear()
             self.offset_range = (None, None)
 
-            # Повернення стандартного стилю Maya
             if track_widget:
                 track_widget.setStyleSheet("")
 
@@ -286,8 +297,6 @@ class TempControlManager:
 
                 self.session_data[master_ctrl] = associated
                 cmds.select(master_ctrl)
-
-    # --- PIVOT LOCATOR WORKFLOW ---
 
     def create_pivot_locator(self):
         sel = cmds.ls(selection=True, type="transform") or []
