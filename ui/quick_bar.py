@@ -11,29 +11,18 @@ from DooAnimKit.core.mirror import PoseMirrorEngine
 
 
 def tint_pixmap_blend(pixmap, color_hex="#00E676", alpha_ratio=0.50):
-    """
-    Subtly blends 50% tint color over original icon's non-transparent pixels,
-    keeping original details while showing a distinct emerald glow.
-    """
     if pixmap.isNull():
         return pixmap
-
     result = QtGui.QPixmap(pixmap.size())
     result.fill(QtCore.Qt.transparent)
-
     painter = QtGui.QPainter(result)
     painter.setRenderHint(QtGui.QPainter.Antialiasing)
     painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
-
-    # 1. Base icon
     painter.drawPixmap(0, 0, pixmap)
-
-    # 2. 50% color overlay over alpha silhouette
     painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceAtop)
     tint_col = QtGui.QColor(color_hex)
     tint_col.setAlphaF(alpha_ratio)
     painter.fillRect(result.rect(), tint_col)
-
     painter.end()
     return result
 
@@ -80,15 +69,16 @@ class HoverIconButton(QtWidgets.QPushButton):
 
 
 class QuickBarSliderWidget(QtWidgets.QWidget):
-    """AnimBot-style sleek slider with slim track and mode switching."""
+    """AnimBot-style spacious slider with wider track and balanced dot positions."""
 
+    # 3 рівномірні точки: дальня (-25%), середня (-15%), внутрішня (-5%)
     TICK_OFFSETS = [
-        (-0.85, 50.0, "-50%"),
-        (-0.58, 20.0, "-20%"),
-        (-0.30, 5.0, "-5%"),
-        (0.30, 5.0, "+5%"),
-        (0.58, 20.0, "+20%"),
-        (0.85, 50.0, "+50%")
+        (-0.84, 25.0, "-25%"),
+        (-0.58, 15.0, "-15%"),
+        (-0.32, 5.0, "-5%"),
+        (0.32, 5.0, "+5%"),
+        (0.58, 15.0, "+15%"),
+        (0.84, 25.0, "+25%")
     ]
 
     def __init__(self, slider_data, parent_bar, parent=None):
@@ -96,13 +86,14 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
         self.slider_data = slider_data
         self.parent_bar = parent_bar
         self.setFixedHeight(24)
-        self.setFixedWidth(175)
+        self.setFixedWidth(220)
         self.val = 0.0
         self.active_drag = False
         self.cached_state = {}
+        self._undo_opened = False
 
     def _get_slider_center_rect(self):
-        btn_w = 36
+        btn_w = 40
         btn_h = 20
         track_w = self.width() - 4
         max_shift = (track_w // 2) - (btn_w // 2) - 2
@@ -127,14 +118,14 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
         mid_x = self.width() // 2
         mid_y = self.height() // 2
 
-        # Slim Track (5px)
-        track_h = 5
+        # Доріжка товщиною 10px із заокругленням 5px
+        track_h = 10
         track_rect = QtCore.QRect(4, mid_y - track_h // 2, self.width() - 8, track_h)
         painter.setBrush(QtGui.QBrush(QtGui.QColor("#181b22")))
-        painter.setPen(QtGui.QPen(QtGui.QColor("#323846"), 1.0))
-        painter.drawRoundedRect(track_rect, 2.5, 2.5)
+        painter.setPen(QtGui.QPen(QtGui.QColor("#2d3340"), 1.0))
+        painter.drawRoundedRect(track_rect, 5.0, 5.0)
 
-        # Active Fill
+        # Активний колір при протягуванні
         if abs(self.val) > 0.02:
             handle_rect = self._get_slider_center_rect()
             hx = handle_rect.center().x()
@@ -142,19 +133,19 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
             fill_color = QtGui.QColor("#EC407A") if self.val < 0 else QtGui.QColor("#AB47BC")
             painter.setBrush(QtGui.QBrush(fill_color))
             painter.setPen(QtCore.Qt.NoPen)
-            painter.drawRoundedRect(fill_rect, 2, 2)
+            painter.drawRoundedRect(fill_rect, 5.0, 5.0)
 
-        # Ticks
+        # Точки 5%, 15%, 25% (чіткі, діаметр 2.5px)
         for tx, ty, pct, label in self._get_tick_points():
-            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 170)))
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 190)))
             painter.setPen(QtCore.Qt.NoPen)
-            painter.drawEllipse(QtCore.QPoint(tx, ty), 1.5, 1.5)
+            painter.drawEllipse(QtCore.QPointF(tx, ty), 1.3, 1.3)
 
-        # Center Handle
+        # Центральна ручка
         c_rect = self._get_slider_center_rect()
         col_color = QtGui.QColor(self.slider_data.get("color", "#00838f"))
         painter.setBrush(QtGui.QBrush(col_color))
-        painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 210), 1))
+        painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 220), 1))
         painter.drawRoundedRect(c_rect, 3, 3)
 
         painter.setPen(QtCore.Qt.white)
@@ -184,12 +175,12 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
 
             if not c_rect.contains(event.pos()):
                 for tx, ty, pct, label in self._get_tick_points():
-                    if ((event.pos().x() - tx)**2 + (event.pos().y() - ty)**2)**0.5 <= 7:
+                    if ((event.pos().x() - tx)**2 + (event.pos().y() - ty)**2)**0.5 <= 9:
                         direction = 1 if tx > (self.width() // 2) else -1
                         if mode == "Offset":
                             from DooAnimKit.core.time_offset_engine import TimeOffsetEngine
                             toe = TimeOffsetEngine()
-                            step_frames = 1 if pct <= 5.0 else (2 if pct <= 20.0 else 5)
+                            step_frames = 1 if pct <= 5.0 else (2 if pct <= 15.0 else 5)
                             toe.step_shift(direction * step_frames)
                         else:
                             from DooAnimKit.core.tween_engine import TweenEngine
@@ -199,6 +190,9 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
                         return
 
             self.active_drag = True
+            cmds.undoInfo(openChunk=True)
+            self._undo_opened = True
+
             if mode == "Offset":
                 from DooAnimKit.core.time_offset_engine import TimeOffsetEngine
                 toe = TimeOffsetEngine()
@@ -207,6 +201,7 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
                 from DooAnimKit.core.tween_engine import TweenEngine
                 te = TweenEngine()
                 self.cached_state = te.cache_current_tween_state()
+
             self._update_drag(event.pos().x())
 
     def mouseMoveEvent(self, event):
@@ -218,10 +213,13 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
             self.val = 0.0
             self.active_drag = False
             self.cached_state.clear()
+            if self._undo_opened:
+                cmds.undoInfo(closeChunk=True)
+                self._undo_opened = False
             self.update()
 
     def _update_drag(self, mouse_x):
-        btn_w = 36
+        btn_w = 40
         max_shift = float((self.width() // 2) - (btn_w // 2) - 2)
         offset_x = mouse_x - (self.width() // 2)
         self.val = max(-1.0, min(1.0, offset_x / max(1.0, max_shift)))
@@ -242,10 +240,6 @@ class QuickBarSliderWidget(QtWidgets.QWidget):
 
 
 class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
-    """
-    AnimBot-style compact toolbar synchronized with DooAnimKitHubWindow.
-    """
-
     UI_NAME = "DooAnimKitQuickBar"
 
     MENU_STYLE = """
@@ -489,7 +483,6 @@ class DooAnimKitQuickBar(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         btn_info = self.items_data[index]
         icon_path = btn_info.get("icon", "")
 
-        # Зберігаємо 50% зелений відтінок під час відкритого меню
         if icon_path and os.path.exists(icon_path):
             norm_pix = QtGui.QPixmap(icon_path).scaled(18, 18, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
             tinted_pix = tint_pixmap_blend(norm_pix, "#00E676", alpha_ratio=0.50)

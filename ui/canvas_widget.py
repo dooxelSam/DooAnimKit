@@ -14,18 +14,18 @@ import maya.mel as mel
 class SpatialActionCanvas(QtWidgets.QWidget):
     """
     Interactive canvas with AnimBot slim sliders, persistent Rig Validation Badge,
-    full pin customization (Tags, Shapes, Colors), and structured submenus.
+    full pin customization (Tags, Shapes, Colors), structured submenus, and single-chunk Undo.
     """
 
     PIN_RADIUS = 9
 
     TICK_OFFSETS = [
-        (-0.85, 50.0, "-50%"),
-        (-0.58, 20.0, "-20%"),
-        (-0.30, 5.0, "-5%"),
-        (0.30, 5.0, "+5%"),
-        (0.58, 20.0, "+20%"),
-        (0.85, 50.0, "+50%")
+        (-0.84, 25.0, "-25%"),
+        (-0.58, 15.0, "-15%"),
+        (-0.32, 5.0, "-5%"),
+        (0.32, 5.0, "+5%"),
+        (0.58, 15.0, "+15%"),
+        (0.84, 25.0, "+25%")
     ]
 
     HIK_TAGS_MAP = {
@@ -42,7 +42,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         "Props & Weapon": ["Weapon_R", "Weapon_L", "Prop_Main"]
     }
 
-    # Збільшений padding-right, щоб назви пунктів відображалися повністю
     MENU_STYLE = """
         QMenu {
             background-color: #1e222b;
@@ -107,6 +106,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         self.slider_cached_state = {}
         self.is_handle_dragging = False
         self.drag_offset = QtCore.QPoint()
+        self._undo_opened = False
 
         self.last_menu_pos_norm = (0.5, 0.5)
 
@@ -165,8 +165,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                         b["w"] = self._calc_button_width(b.get("label", "Action"))
                     for s in self.sliders:
                         s.setdefault("mode", "Tween")
-                        if s.get("w", 0) < 180:
-                            s["w"] = 180
+                        if s.get("w", 0) < 235:
+                            s["w"] = 235
                     for p in self.pins:
                         p.setdefault("shape", "Circle")
                         if "hik_tag" not in p or p["hik_tag"] in ("None", "Spine"):
@@ -297,8 +297,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                         b["w"] = self._calc_button_width(b.get("label", "Action"))
                     for s in self.sliders:
                         s.setdefault("mode", "Tween")
-                        if s.get("w", 0) < 180:
-                            s["w"] = 180
+                        if s.get("w", 0) < 235:
+                            s["w"] = 235
                     for p in self.pins:
                         p.setdefault("shape", "Circle")
                 img_file = file_path.replace(".json", "_img.png")
@@ -347,12 +347,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
     def _get_slider_rect(self, sld, img_rect):
         sx = img_rect.x() + int(sld["u"] * img_rect.width())
         sy = img_rect.y() + int(sld["v"] * img_rect.height())
-        sw = max(180, sld.get("w", 180))
+        sw = max(235, sld.get("w", 235))
         sh = 24
         return QtCore.QRect(sx, sy, sw, sh)
 
     def _get_slider_center_btn_rect(self, sld_rect, val=0.0):
-        btn_w = 36
+        btn_w = 40
         btn_h = 20
         track_w = sld_rect.width() - 4
         max_shift = (track_w // 2) - (btn_w // 2) - 2
@@ -420,18 +420,18 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         painter.setFont(f)
         painter.drawText(badge_rect, QtCore.Qt.AlignCenter, b_text)
 
-        # 1. AnimBot Slim Sliders (5px)
+        # 1. AnimBot Slim Sliders (10px track)
         for sld in self.sliders:
             srect = self._get_slider_rect(sld, img_rect)
             val = sld.get("val", 0.0)
             mid_x = srect.center().x()
             mid_y = srect.center().y()
 
-            track_h = 5
+            track_h = 10
             track_rect = QtCore.QRect(srect.x() + 4, mid_y - track_h // 2, srect.width() - 8, track_h)
             painter.setBrush(QtGui.QBrush(QtGui.QColor("#181b22")))
-            painter.setPen(QtGui.QPen(QtGui.QColor("#323846"), 1.0))
-            painter.drawRoundedRect(track_rect, 2.5, 2.5)
+            painter.setPen(QtGui.QPen(QtGui.QColor("#2d3340"), 1.0))
+            painter.drawRoundedRect(track_rect, 5.0, 5.0)
 
             if abs(val) > 0.02:
                 handle_rect = self._get_slider_center_btn_rect(srect, val)
@@ -440,12 +440,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 fill_color = QtGui.QColor("#EC407A") if val < 0 else QtGui.QColor("#AB47BC")
                 painter.setBrush(QtGui.QBrush(fill_color))
                 painter.setPen(QtCore.Qt.NoPen)
-                painter.drawRoundedRect(fill_rect, 2, 2)
+                painter.drawRoundedRect(fill_rect, 5.0, 5.0)
 
             for tx, ty, pct, label in self._get_tick_points(srect):
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 170)))
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 190)))
                 painter.setPen(QtCore.Qt.NoPen)
-                painter.drawEllipse(QtCore.QPoint(tx, ty), 1.5, 1.5)
+                painter.drawEllipse(QtCore.QPointF(tx, ty), 1.3, 1.3)
 
             c_rect = self._get_slider_center_btn_rect(srect, val)
             col_color = QtGui.QColor(sld.get("color", "#00838f"))
@@ -507,7 +507,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 painter.setFont(font)
                 painter.drawText(brect, QtCore.Qt.AlignCenter, display_label)
 
-        # 3. Pins (Підтримка форм: Circle, Square, Triangle, Diamond, Star)
+        # 3. Pins
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
             py = img_rect.y() + int(pin["v"] * img_rect.height())
@@ -608,12 +608,12 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
                     if not c_rect.contains(event.pos()):
                         for tx, ty, pct, label in self._get_tick_points(srect):
-                            if ((event.pos().x() - tx)**2 + (event.pos().y() - ty)**2)**0.5 <= 8:
+                            if ((event.pos().x() - tx)**2 + (event.pos().y() - ty)**2)**0.5 <= 9:
                                 direction = 1 if tx > srect.center().x() else -1
                                 if mode == "Offset":
                                     from DooAnimKit.core.time_offset_engine import TimeOffsetEngine
                                     toe = TimeOffsetEngine()
-                                    step_frames = 1 if pct <= 5.0 else (2 if pct <= 20.0 else 5)
+                                    step_frames = 1 if pct <= 5.0 else (2 if pct <= 15.0 else 5)
                                     toe.step_shift(direction * step_frames)
                                 else:
                                     if hasattr(self.main_window, "tween_engine"):
@@ -623,6 +623,9 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
                     self.active_slider_handle = sld
                     self.is_handle_dragging = True
+                    cmds.undoInfo(openChunk=True)
+                    self._undo_opened = True
+
                     if mode == "Offset":
                         from DooAnimKit.core.time_offset_engine import TimeOffsetEngine
                         toe = TimeOffsetEngine()
@@ -664,7 +667,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             self.update()
 
     def _update_slider_drag(self, sld, pos, srect):
-        btn_w = 36
+        btn_w = 40
         max_shift = float((srect.width() // 2) - (btn_w // 2) - 2)
         offset_x = pos.x() - srect.center().x()
         val = max(-1.0, min(1.0, offset_x / max(1.0, max_shift)))
@@ -720,6 +723,9 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             self.active_slider_handle = None
             self.is_handle_dragging = False
             self.slider_cached_state.clear()
+            if self._undo_opened:
+                cmds.undoInfo(closeChunk=True)
+                self._undo_opened = False
             self.update()
             return
 
@@ -882,7 +888,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.update()
             return
 
-        # 3. Pin Under Cursor — ПОВНЕ ВІДНОВЛЕНЕ МЕНЮ ПІНА
+        # 3. Pin Under Cursor
         clicked_pin = None
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
@@ -984,7 +990,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             cat = act.get("category")
             if cat in categories_map:
                 item = categories_map[cat].addAction(act["name"])
-                item.triggered.connect(lambda checked=False, a=act: self._handle_action_trigger(a))
+                item.triggered.connect(lambda checked=False, a=act: self.action_registry.execute(a["id"]))
 
         tools_menu.addSeparator()
         for direct_id, direct_title in [("temp_offset_toggle", "Global Offset"), ("trail_toggle", "Motion Trail")]:
@@ -1021,7 +1027,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 "action_id": "tween_mid_50",
                 "u": norm_u,
                 "v": norm_v,
-                "w": 180,
+                "w": 235,
                 "h": 24,
                 "val": 0.0,
                 "color": "#00838f"
@@ -1036,7 +1042,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 "action_id": "time_offset",
                 "u": norm_u,
                 "v": norm_v,
-                "w": 180,
+                "w": 235,
                 "h": 24,
                 "val": 0.0,
                 "color": "#00695c"
