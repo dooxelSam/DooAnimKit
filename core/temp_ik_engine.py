@@ -51,8 +51,9 @@ class TempIKEngine:
         tag_to_ctrl = {}
         for p in pins:
             tag = p.get("hik_tag", "")
+            tag_clean = tag.split("[")[0].strip()
             for t_tag in target_tags:
-                if t_tag in tag:
+                if t_tag == tag_clean:
                     tag_to_ctrl[t_tag] = p.get("name")
 
         resolved_ctrls = [tag_to_ctrl.get(t) for t in target_tags]
@@ -181,24 +182,30 @@ class TempIKEngine:
         }
 
     def switch_to_fk_and_bake_pose(self, limb_name, pins=[]):
-        """Matches FK controls to the current Temp IK pose, sets keys, and removes Temp IK."""
+        """Matches FK controls to current Temp IK pose, sets keys, and removes Temp IK."""
         ctrls, _ = self._resolve_nodes(limb_name, pins)
         if not ctrls:
             self.remove_temp_ik(limb_name)
             return
 
         with UndoContext(f"SwitchToFK_{limb_name}"):
-            # Зчитуємо поточні трансформації, досягнуті через IK
-            for c in ctrls:
-                rot = cmds.xform(c, query=True, rotation=True)
-                cmds.setKeyframe(c, attribute="rotate", value=rot[0], at="rotateX")
-                cmds.setKeyframe(c, attribute="rotate", value=rot[1], at="rotateY")
-                cmds.setKeyframe(c, attribute="rotate", value=rot[2], at="rotateZ")
+            # 1. Кешуємо точні кути обертання, які зараз має поза IK
+            saved_rotations = [cmds.xform(c, query=True, rotation=True) for c in ctrls]
 
+            # 2. Видаляємо тимчасовий IK і відновлюємо ваги FK
             self.remove_temp_ik(limb_name)
 
+            # 3. Примусово записуємо збережені кути та ставимо ключі на FK
+            for c, rot in zip(ctrls, saved_rotations):
+                for axis, val in zip(["rotateX", "rotateY", "rotateZ"], rot):
+                    try:
+                        cmds.setAttr(f"{c}.{axis}", val)
+                        cmds.setKeyframe(f"{c}.{axis}", value=val)
+                    except Exception:
+                        pass
+
         cmds.select(ctrls)
-        cmds.inViewMessage(amg=f"Temp IK: <hl>{limb_name} перемкнено у FK (позу збережено)!</hl>", pos="topCenter", fade=True)
+        cmds.inViewMessage(amg=f"Temp IK: <hl>{limb_name} перемкнено у FK (позу запечено)!</hl>", pos="topCenter", fade=True)
 
     def bake_and_delete_temp_ik(self, limb_name, pins=[]):
         """Bakes full time-range animation from Temp IK back to FK controls."""

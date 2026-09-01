@@ -152,23 +152,26 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         ik_ctrl = res["ik_ctrl"]
         pv_ctrl = res["pv_ctrl"]
 
+        side_prefix = "Left" if limb_name.startswith("Left") else "Right"
         foot_wrist_tag = "Foot" if "Leg" in limb_name else "Wrist"
         knee_elbow_tag = "Knee" if "Leg" in limb_name else "Elbow"
-        side_prefix = "Left" if limb_name.startswith("Left") else "Right"
 
-        base_foot_u, base_foot_v = 0.5, 0.8
-        base_knee_u, base_knee_v = 0.5, 0.6
+        base_foot_u = 0.58 if side_prefix == "Left" else 0.42
+        base_foot_v = 0.88
+        base_knee_u = 0.58 if side_prefix == "Left" else 0.42
+        base_knee_v = 0.65
 
         for p in self.pins:
             tag = p.get("hik_tag", "")
-            if f"{side_prefix}{foot_wrist_tag}" in tag:
+            tag_clean = tag.split("[")[0].strip()
+            if tag_clean == f"{side_prefix}{foot_wrist_tag}":
                 base_foot_u, base_foot_v = p["u"], p["v"]
-            elif f"{side_prefix}{knee_elbow_tag}" in tag:
+            elif tag_clean == f"{side_prefix}{knee_elbow_tag}":
                 base_knee_u, base_knee_v = p["u"], p["v"]
 
-        offset_x = -0.08 if side_prefix == "Right" else 0.08
+        offset_x = -0.09 if side_prefix == "Right" else 0.09
 
-        # Очищаємо попередні піни тільки цієї кінцівки
+        # Очищаємо піни тільки цієї кінцівки
         self.temp_ik_pins = [p for p in self.temp_ik_pins if p.get("limb") != limb_name]
 
         self.temp_ik_pins.append({
@@ -178,7 +181,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             "u": max(0.02, min(0.98, base_foot_u + offset_x)),
             "v": base_foot_v,
             "shape": "Box",
-            "color": "#00E676"
+            "color": "#00E676" if side_prefix == "Left" else "#FF5252"
         })
 
         self.temp_ik_pins.append({
@@ -188,15 +191,14 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             "u": max(0.02, min(0.98, base_knee_u + offset_x)),
             "v": base_knee_v,
             "shape": "Diamond",
-            "color": "#00E5FF"
+            "color": "#00E5FF" if side_prefix == "Left" else "#FFD700"
         })
 
+        self.save_state()
         self.update()
 
     def remove_temp_ik_for_limb(self, limb_name, mode="discard"):
-        """
-        mode: 'discard' (no bake), 'match_fk' (current frame pose), 'bake_timeline' (full bake)
-        """
+        """Removes Temp IK, executes the requested bake mode, and cleans canvas pins."""
         if mode == "match_fk":
             self.temp_ik.switch_to_fk_and_bake_pose(limb_name, self.pins)
         elif mode == "bake_timeline":
@@ -205,6 +207,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             self.temp_ik.remove_temp_ik(limb_name)
 
         self.temp_ik_pins = [p for p in self.temp_ik_pins if p.get("limb") != limb_name]
+        self.save_state()
         self.update()
 
     def run_auto_capture(self):
@@ -362,7 +365,6 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
         return QtCore.QRect(draw_x, draw_y, max(1, draw_w), max(1, draw_h))
 
-    # --- Header Toolbars ---
     def _get_mode_toggle_rect(self):
         return QtCore.QRect(10, 8, 105, 24)
 
@@ -920,14 +922,17 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 menu.addSection(f"🎯 Control: {ctrl_name}")
 
                 target_limb = None
-                if "LeftFoot" in tag or "LeftFoot" in ctrl_name or "L.Foot" in tag:
-                    target_limb = "LeftLeg"
-                elif "RightFoot" in tag or "RightFoot" in ctrl_name or "R.Foot" in tag:
+                tag_lower = tag.lower()
+                ctrl_lower = ctrl_name.lower()
+
+                if "rightfoot" in tag_lower or "rightfoot" in ctrl_lower or "r.foot" in tag_lower or "rightleg" in tag_lower:
                     target_limb = "RightLeg"
-                elif "LeftWrist" in tag or "LeftHand" in ctrl_name or "L.Wrist" in tag:
-                    target_limb = "LeftArm"
-                elif "RightWrist" in tag or "RightHand" in ctrl_name or "R.Wrist" in tag:
+                elif "leftfoot" in tag_lower or "leftfoot" in ctrl_lower or "l.foot" in tag_lower or "leftleg" in tag_lower:
+                    target_limb = "LeftLeg"
+                elif "rightwrist" in tag_lower or "righthand" in ctrl_lower or "r.wrist" in tag_lower or "rightarm" in tag_lower:
                     target_limb = "RightArm"
+                elif "leftwrist" in tag_lower or "lefthand" in ctrl_lower or "l.wrist" in tag_lower or "leftarm" in tag_lower:
+                    target_limb = "LeftArm"
                 elif "limb" in clicked_pin:
                     target_limb = clicked_pin["limb"]
 
@@ -985,6 +990,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             act_add_tween = menu.addAction("🎚 Add Tween Slider")
             act_add_offset = menu.addAction("⏱️ Add Time Offset Slider")
             menu.addSeparator()
+            act_purge_all = menu.addAction("🧹 Emergency Reset Temp IK")
             act_switch_rig = menu.addAction("🦴 Switch to Auto-Rig Mode")
 
             chosen = menu.exec_(self.mapToGlobal(pos))
@@ -1008,6 +1014,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 })
                 self.save_state()
                 self.update()
+            elif chosen == act_purge_all:
+                self.emergency_purge_all_temp_ik()
             elif chosen == act_switch_rig:
                 self.set_canvas_mode("rig")
             return
