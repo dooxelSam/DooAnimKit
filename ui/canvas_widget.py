@@ -9,14 +9,16 @@ except ImportError:
 
 import maya.cmds as cmds
 import maya.mel as mel
+
 from DooAnimKit.core.auto_capture import AutoCaptureEngine
 from DooAnimKit.core.rig_builder import RigBuilderEngine
+from DooAnimKit.core.temp_ik_engine import TempIKEngine
 
 
 class SpatialActionCanvas(QtWidgets.QWidget):
     """
     Dual-mode canvas:
-    1. Animation Mode: Live rig control pickers, AnimBot slim sliders, HIK mirror badges.
+    1. Animation Mode: Multi-limb independent Temp IK toggles, outer badge placement, and AnimBot sliders.
     2. Auto-Rig Mode: 3-View synchronized 3D guides, Live Rebuild, Shape Mirroring, and Finalize.
     """
 
@@ -89,6 +91,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         self.mirror_mode = True
 
         self.pins = []
+        self.temp_ik_pins = []
         self.rig_guides = []
         self.buttons = []
         self.sliders = []
@@ -116,6 +119,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
         self.capture_engine = AutoCaptureEngine()
         self.rig_builder = RigBuilderEngine()
+        self.temp_ik = TempIKEngine()
 
         self._ensure_storage_dir()
         self._load_saved_data()
@@ -137,6 +141,70 @@ class SpatialActionCanvas(QtWidgets.QWidget):
     def toggle_mirror_mode(self):
         self.mirror_mode = not self.mirror_mode
         self.save_state()
+        self.update()
+
+    def activate_temp_ik_for_limb(self, limb_name):
+        """Creates independent Temp IK and places interactive pins on outer sides."""
+        res = self.temp_ik.create_temp_ik(limb_name, self.pins)
+        if not res:
+            return
+
+        ik_ctrl = res["ik_ctrl"]
+        pv_ctrl = res["pv_ctrl"]
+
+        foot_wrist_tag = "Foot" if "Leg" in limb_name else "Wrist"
+        knee_elbow_tag = "Knee" if "Leg" in limb_name else "Elbow"
+        side_prefix = "Left" if limb_name.startswith("Left") else "Right"
+
+        base_foot_u, base_foot_v = 0.5, 0.8
+        base_knee_u, base_knee_v = 0.5, 0.6
+
+        for p in self.pins:
+            tag = p.get("hik_tag", "")
+            if f"{side_prefix}{foot_wrist_tag}" in tag:
+                base_foot_u, base_foot_v = p["u"], p["v"]
+            elif f"{side_prefix}{knee_elbow_tag}" in tag:
+                base_knee_u, base_knee_v = p["u"], p["v"]
+
+        offset_x = -0.08 if side_prefix == "Right" else 0.08
+
+        # Очищаємо попередні піни тільки цієї кінцівки
+        self.temp_ik_pins = [p for p in self.temp_ik_pins if p.get("limb") != limb_name]
+
+        self.temp_ik_pins.append({
+            "name": ik_ctrl,
+            "hik_tag": f"{side_prefix[0]}.{foot_wrist_tag} [IK]",
+            "limb": limb_name,
+            "u": max(0.02, min(0.98, base_foot_u + offset_x)),
+            "v": base_foot_v,
+            "shape": "Box",
+            "color": "#00E676"
+        })
+
+        self.temp_ik_pins.append({
+            "name": pv_ctrl,
+            "hik_tag": f"{side_prefix[0]}.{knee_elbow_tag} [PV]",
+            "limb": limb_name,
+            "u": max(0.02, min(0.98, base_knee_u + offset_x)),
+            "v": base_knee_v,
+            "shape": "Diamond",
+            "color": "#00E5FF"
+        })
+
+        self.update()
+
+    def remove_temp_ik_for_limb(self, limb_name, mode="discard"):
+        """
+        mode: 'discard' (no bake), 'match_fk' (current frame pose), 'bake_timeline' (full bake)
+        """
+        if mode == "match_fk":
+            self.temp_ik.switch_to_fk_and_bake_pose(limb_name, self.pins)
+        elif mode == "bake_timeline":
+            self.temp_ik.bake_and_delete_temp_ik(limb_name, self.pins)
+        else:
+            self.temp_ik.remove_temp_ik(limb_name)
+
+        self.temp_ik_pins = [p for p in self.temp_ik_pins if p.get("limb") != limb_name]
         self.update()
 
     def run_auto_capture(self):
@@ -176,6 +244,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 new_pins.append(p)
 
             self.pins = new_pins
+            self.temp_ik_pins.clear()
             self.canvas_mode = "anim"
             self.save_state()
             self.updateGeometry()
@@ -257,6 +326,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
 
     def clear_all(self):
         self.pins.clear()
+        self.temp_ik_pins.clear()
         self.rig_guides.clear()
         self.buttons.clear()
         self.sliders.clear()
@@ -388,8 +458,8 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                     self.rect(), QtCore.Qt.AlignCenter,
                     "⚡ ANIMATION MODE\n\n"
                     "1. Switch to 'Auto-Rig Mode' to build rig\n"
-                    "2. Click pins to select controls & animate\n"
-                    "3. Sliders: Tween & Time Offset ready"
+                    "2. Right-Click on Foot / Wrist pins for On-the-Fly Temp IK\n"
+                    "3. Click pins to select controls & animate"
                 )
 
         if self.canvas_mode == "rig":
@@ -507,7 +577,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 painter.drawText(label_rect, QtCore.Qt.AlignCenter, lbl)
             return
 
-        # 5. Animation Mode Pins
+        # 5. Animation Mode Sliders
         for sld in self.sliders:
             srect = self._get_slider_rect(sld, img_rect)
             val = sld.get("val", 0.0)
@@ -551,6 +621,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             else:
                 painter.drawText(c_rect, QtCore.Qt.AlignCenter, sld.get("label", "Tween"))
 
+        # 6. Animation Mode Base Pins
         for pin in self.pins:
             px = img_rect.x() + int(pin["u"] * img_rect.width())
             py = img_rect.y() + int(pin["v"] * img_rect.height())
@@ -566,7 +637,36 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 f_p.setPointSize(6)
                 f_p.setBold(True)
                 painter.setFont(f_p)
-                painter.drawText(QtCore.QRect(px - 35, py + self.PIN_RADIUS + 1, 70, 12), QtCore.Qt.AlignCenter, tag)
+                painter.drawText(QtCore.QRect(px - 45, py + self.PIN_RADIUS + 1, 90, 12), QtCore.Qt.AlignCenter, tag)
+
+        # 7. Animation Mode Multi-Limb Temp IK / PV Pins
+        for t_pin in self.temp_ik_pins:
+            px = img_rect.x() + int(t_pin["u"] * img_rect.width())
+            py = img_rect.y() + int(t_pin["v"] * img_rect.height())
+            shape_type = t_pin.get("shape", "Box")
+            b_col = QtGui.QColor(t_pin.get("color", "#00E676"))
+
+            painter.setBrush(QtGui.QBrush(b_col))
+            painter.setPen(QtGui.QPen(QtCore.Qt.white, 1.8))
+
+            if shape_type == "Box":
+                box_sz = self.PIN_RADIUS * 2
+                painter.drawRoundedRect(QtCore.QRect(px - self.PIN_RADIUS, py - self.PIN_RADIUS, box_sz, box_sz), 3, 3)
+            else:
+                d_poly = QtGui.QPolygon([
+                    QtCore.QPoint(px, py - self.PIN_RADIUS - 2),
+                    QtCore.QPoint(px + self.PIN_RADIUS + 2, py),
+                    QtCore.QPoint(px, py + self.PIN_RADIUS + 2),
+                    QtCore.QPoint(px - self.PIN_RADIUS - 2, py)
+                ])
+                painter.drawPolygon(d_poly)
+
+            painter.setPen(QtCore.Qt.white)
+            f_tip = painter.font()
+            f_tip.setPointSize(6)
+            f_tip.setBold(True)
+            painter.setFont(f_tip)
+            painter.drawText(QtCore.QRect(px - 35, py - self.PIN_RADIUS - 14, 70, 12), QtCore.Qt.AlignCenter, t_pin.get("hik_tag", "IK"))
 
         if self.is_box_selecting:
             box_rect = QtCore.QRect(self.box_start, self.box_current).normalized()
@@ -575,13 +675,11 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             painter.drawRect(box_rect)
 
     def mousePressEvent(self, event):
-        # 1. Mode Toggle
         if self._get_mode_toggle_rect().contains(event.pos()):
             new_mode = "anim" if self.canvas_mode == "rig" else "rig"
             self.set_canvas_mode(new_mode)
             return
 
-        # 2. Top Toolbar Clicks (Auto-Rig Mode)
         if self.canvas_mode == "rig":
             if self._get_capture_btn_rect().contains(event.pos()):
                 self.run_auto_capture()
@@ -614,12 +712,10 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         if img_rect.isEmpty():
             return
 
-        # 3. Context Menu on RMB
         if event.button() == QtCore.Qt.RightButton:
             self._show_context_menu(event.pos(), img_rect)
             return
 
-        # 4. Guide Selection & Dragging (LMB)
         if event.button() == QtCore.Qt.LeftButton and self.canvas_mode == "rig":
             for guide in reversed(self.rig_guides):
                 pos3d = guide.get("pos3d", [0.0, 0.0, 0.0])
@@ -637,7 +733,16 @@ class SpatialActionCanvas(QtWidgets.QWidget):
             self.update()
             return
 
-        # 5. Animation Mode Interactions
+        if event.button() == QtCore.Qt.LeftButton and self.canvas_mode == "anim":
+            for t_pin in reversed(self.temp_ik_pins):
+                px = img_rect.x() + int(t_pin["u"] * img_rect.width())
+                py = img_rect.y() + int(t_pin["v"] * img_rect.height())
+                if ((event.pos().x() - px)**2 + (event.pos().y() - py)**2)**0.5 <= self.PIN_RADIUS + 5:
+                    add_mode = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
+                    if cmds.objExists(t_pin["name"]):
+                        cmds.select(t_pin["name"], add=add_mode)
+                    return
+
         for sld in reversed(self.sliders):
             srect = self._get_slider_rect(sld, img_rect)
             if srect.contains(event.pos()):
@@ -781,7 +886,7 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 box = QtCore.QRect(self.box_start, self.box_current).normalized()
                 add_mode = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
                 sel_nodes = []
-                for p in self.pins:
+                for p in (self.pins + self.temp_ik_pins):
                     px = img_rect.x() + int(p["u"] * img_rect.width())
                     py = img_rect.y() + int(p["v"] * img_rect.height())
                     if box.contains(QtCore.QPoint(px, py)) and "name" in p and cmds.objExists(p["name"]):
@@ -799,7 +904,115 @@ class SpatialActionCanvas(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(self.MENU_STYLE)
 
-        # 1. RMB Context Menu in Auto-Rig Mode
+        # 1. ПКМ у режимі АНІМАЦІЇ
+        if self.canvas_mode == "anim":
+            clicked_pin = None
+            for pin in reversed(self.pins + self.temp_ik_pins):
+                px = img_rect.x() + int(pin["u"] * img_rect.width())
+                py = img_rect.y() + int(pin["v"] * img_rect.height())
+                if ((pos.x() - px)**2 + (pos.y() - py)**2)**0.5 <= self.PIN_RADIUS + 5:
+                    clicked_pin = pin
+                    break
+
+            if clicked_pin:
+                tag = clicked_pin.get("hik_tag", "")
+                ctrl_name = clicked_pin.get("name", "Control")
+                menu.addSection(f"🎯 Control: {ctrl_name}")
+
+                target_limb = None
+                if "LeftFoot" in tag or "LeftFoot" in ctrl_name or "L.Foot" in tag:
+                    target_limb = "LeftLeg"
+                elif "RightFoot" in tag or "RightFoot" in ctrl_name or "R.Foot" in tag:
+                    target_limb = "RightLeg"
+                elif "LeftWrist" in tag or "LeftHand" in ctrl_name or "L.Wrist" in tag:
+                    target_limb = "LeftArm"
+                elif "RightWrist" in tag or "RightHand" in ctrl_name or "R.Wrist" in tag:
+                    target_limb = "RightArm"
+                elif "limb" in clicked_pin:
+                    target_limb = clicked_pin["limb"]
+
+                if target_limb:
+                    is_active = self.temp_ik.is_temp_ik_active(target_limb)
+                    status_str = "IK ACTIVE" if is_active else "FK NATIVE"
+                    ik_menu = menu.addMenu(f"⚡ On-the-Fly Temp IK [{target_limb}] ({status_str})")
+                    ik_menu.setStyleSheet(self.MENU_STYLE)
+
+                    if not is_active:
+                        act_create_temp_ik = ik_menu.addAction("🦾 Switch to Temp IK")
+                        act_switch_to_fk = None
+                        act_bake_timeline = None
+                        act_discard = None
+                    else:
+                        act_create_temp_ik = None
+                        act_switch_to_fk = ik_menu.addAction("🔄 Switch to FK (Bake Pose)")
+                        act_bake_timeline = ik_menu.addAction("🔥 Bake Temp IK (All Keys)")
+                        act_discard = ik_menu.addAction("❌ Discard Temp IK (No Bake)")
+
+                    menu.addSeparator()
+                    delete_pin_act = menu.addAction("🗑 Delete Pin")
+                    chosen = menu.exec_(self.mapToGlobal(pos))
+
+                    if act_create_temp_ik and chosen == act_create_temp_ik:
+                        self.activate_temp_ik_for_limb(target_limb)
+                    elif act_switch_to_fk and chosen == act_switch_to_fk:
+                        self.remove_temp_ik_for_limb(target_limb, mode="match_fk")
+                    elif act_bake_timeline and chosen == act_bake_timeline:
+                        self.remove_temp_ik_for_limb(target_limb, mode="bake_timeline")
+                    elif act_discard and chosen == act_discard:
+                        self.remove_temp_ik_for_limb(target_limb, mode="discard")
+                    elif chosen == delete_pin_act:
+                        if clicked_pin in self.pins:
+                            self.pins.remove(clicked_pin)
+                        elif clicked_pin in self.temp_ik_pins:
+                            self.temp_ik_pins.remove(clicked_pin)
+                        self.save_state()
+                        self.update()
+                    return
+
+                delete_pin_act = menu.addAction("🗑 Delete Pin")
+                chosen = menu.exec_(self.mapToGlobal(pos))
+                if chosen == delete_pin_act:
+                    if clicked_pin in self.pins:
+                        self.pins.remove(clicked_pin)
+                    elif clicked_pin in self.temp_ik_pins:
+                        self.temp_ik_pins.remove(clicked_pin)
+                    self.save_state()
+                    self.update()
+                return
+
+            menu.addSection("⚡ Animation Hub")
+            act_add_pin = menu.addAction("📍 Add Pin (From Selection)")
+            act_add_tween = menu.addAction("🎚 Add Tween Slider")
+            act_add_offset = menu.addAction("⏱️ Add Time Offset Slider")
+            menu.addSeparator()
+            act_switch_rig = menu.addAction("🦴 Switch to Auto-Rig Mode")
+
+            chosen = menu.exec_(self.mapToGlobal(pos))
+            if chosen == act_add_pin:
+                sel = cmds.ls(selection=True, type="transform")
+                if sel:
+                    self.pins.append({"name": sel[0], "u": norm_u, "v": norm_v, "shape": "Circle"})
+                    self.save_state()
+                    self.update()
+            elif chosen == act_add_tween:
+                self.sliders.append({
+                    "label": "Tween", "mode": "Tween", "action_id": "tween_mid_50",
+                    "u": norm_u, "v": norm_v, "w": 235, "h": 24, "val": 0.0, "color": "#00838f"
+                })
+                self.save_state()
+                self.update()
+            elif chosen == act_add_offset:
+                self.sliders.append({
+                    "label": "Offset", "mode": "Offset", "action_id": "time_offset",
+                    "u": norm_u, "v": norm_v, "w": 235, "h": 24, "val": 0.0, "color": "#00695c"
+                })
+                self.save_state()
+                self.update()
+            elif chosen == act_switch_rig:
+                self.set_canvas_mode("rig")
+            return
+
+        # 2. ПКМ у режимі AUTO-RIG
         if self.canvas_mode == "rig":
             clicked_guide = None
             for guide in self.rig_guides:
@@ -902,61 +1115,3 @@ class SpatialActionCanvas(QtWidgets.QWidget):
                 self.selected_guide = None
                 self.save_state()
                 self.update()
-            return
-
-        # 2. RMB Context Menu in Animation Mode
-        menu.addSection("⚡ Animation Hub")
-        act_add_pin = menu.addAction("📍 Add Pin (From Selection)")
-        act_add_tween = menu.addAction("🎚 Add Tween Slider")
-        act_add_offset = menu.addAction("⏱️ Add Time Offset Slider")
-        menu.addSeparator()
-        act_switch_rig = menu.addAction("🦴 Switch to Auto-Rig Mode")
-
-        chosen = menu.exec_(self.mapToGlobal(pos))
-        if chosen == act_add_pin:
-            sel = cmds.ls(selection=True, type="transform")
-            if sel:
-                self.pins.append({"name": sel[0], "u": norm_u, "v": norm_v, "shape": "Circle"})
-                self.save_state()
-                self.update()
-        elif chosen == act_add_tween:
-            self.sliders.append({
-                "label": "Tween", "mode": "Tween", "action_id": "tween_mid_50",
-                "u": norm_u, "v": norm_v, "w": 235, "h": 24, "val": 0.0, "color": "#00838f"
-            })
-            self.save_state()
-            self.update()
-        elif chosen == act_add_offset:
-            self.sliders.append({
-                "label": "Offset", "mode": "Offset", "action_id": "time_offset",
-                "u": norm_u, "v": norm_v, "w": 235, "h": 24, "val": 0.0, "color": "#00695c"
-            })
-            self.save_state()
-            self.update()
-        elif chosen == act_switch_rig:
-            self.set_canvas_mode("rig")
-
-    def _mirror_all_left_to_right(self):
-        cx = self._get_symmetry_center_x()
-        left_guides = [g for g in self.rig_guides if g.get("pos3d", [0,0,0])[0] < cx - 0.05]
-        new_list = [g for g in self.rig_guides if g.get("pos3d", [0,0,0])[0] <= cx + 0.05]
-
-        for lg in left_guides:
-            pos3d = lg["pos3d"]
-            mir_x = cx - (pos3d[0] - cx)
-            mir_id = f"{lg.get('id', 'g')}_mir"
-            lg["pair_id"] = mir_id
-
-            mir_guide = {
-                "id": mir_id,
-                "name": f"{lg.get('name')}_R",
-                "hik_tag": self._get_mirrored_tag(lg.get("hik_tag", "None")),
-                "pos3d": [mir_x, pos3d[1], pos3d[2]],
-                "pair_id": lg.get("id")
-            }
-            new_list.append(mir_guide)
-
-        self.rig_guides = new_list
-        self.save_state()
-        self.update()
-        cmds.inViewMessage(amg="Auto-Rig: <hl>All Left guides mirrored to Right!</hl>", pos="topCenter", fade=True)

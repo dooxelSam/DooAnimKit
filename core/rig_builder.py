@@ -1,7 +1,7 @@
 """
 Rig Builder Engine for DooAnimKit.
-Dynamic Spine Solver, Direct CV Vertex Shape Preservation (selectCurveCV compatible),
-World-Space Curve Shape Mirroring, and Animation Canvas bridge.
+Dynamic Spine Solver, Direct CV Vertex Shape Preservation,
+World-Space Curve Shape Mirroring, and Legs IK/FK Rig System.
 """
 
 import os
@@ -62,10 +62,10 @@ class RigBuilderEngine:
 
         shape_data = cached_shapes.get(name)
 
-        # 1. Створюємо базове коло в Maya
+        # Базове коло
         circ = cmds.circle(name=ctrl_name, normal=axis, radius=radius, ch=False)[0]
 
-        # 2. Якщо користувач крутив/скейлив вертекси (через selectCurveCV) — примусово ставимо їх на місце
+        # Відновлення відредагованих вертексів
         if shape_data and shape_data.get("cvs"):
             shapes = cmds.listRelatives(circ, shapes=True, fullPath=True) or []
             if shapes:
@@ -77,7 +77,6 @@ class RigBuilderEngine:
                     for i, pt in enumerate(cv_points):
                         cmds.xform(f"{shape}.cv[{i}]", objectSpace=True, translation=pt)
 
-        # 3. Колір кривої
         shapes = cmds.listRelatives(circ, shapes=True, fullPath=True) or []
         if shapes:
             shape = shapes[0]
@@ -92,6 +91,56 @@ class RigBuilderEngine:
             cmds.setAttr(f"{shape}.overrideColor", col_idx)
 
         return circ
+
+    def _create_box_foot_ctrl(self, name, size=3.0, color="yellow"):
+        """Creates box shape controller for IK foot."""
+        ctrl_name = f"CTRL_IK_{name}"
+        if cmds.objExists(ctrl_name):
+            try:
+                cmds.delete(ctrl_name)
+            except Exception:
+                pass
+
+        # Створення кубічної форми кривої для стопи
+        s = size * 0.5
+        points = [
+            [-s, 0, -s], [s, 0, -s], [s, 0, s], [-s, 0, s], [-s, 0, -s],
+            [-s, s*0.8, -s], [s, s*0.8, -s], [s, 0, -s],
+            [s, s*0.8, -s], [s, s*0.8, s], [s, 0, s],
+            [s, s*0.8, s], [-s, s*0.8, s], [-s, 0, s],
+            [-s, s*0.8, s], [-s, s*0.8, -s]
+        ]
+        ctrl = cmds.curve(name=ctrl_name, degree=1, point=points)
+        shapes = cmds.listRelatives(ctrl, shapes=True, fullPath=True) or []
+        if shapes:
+            shape = shapes[0]
+            cmds.setAttr(f"{shape}.overrideEnabled", 1)
+            col_idx = 6 if color == "blue" else (13 if color == "red" else 17)
+            cmds.setAttr(f"{shape}.overrideColor", col_idx)
+        return ctrl
+
+    def _create_pole_ctrl(self, name, size=1.5, color="yellow"):
+        """Creates diamond shape for Pole Vector."""
+        ctrl_name = f"CTRL_IK_{name}"
+        if cmds.objExists(ctrl_name):
+            try:
+                cmds.delete(ctrl_name)
+            except Exception:
+                pass
+
+        s = size
+        points = [
+            [0, s, 0], [s, 0, 0], [0, -s, 0], [-s, 0, 0], [0, s, 0],
+            [0, 0, s], [0, -s, 0], [0, 0, -s], [0, s, 0]
+        ]
+        ctrl = cmds.curve(name=ctrl_name, degree=1, point=points)
+        shapes = cmds.listRelatives(ctrl, shapes=True, fullPath=True) or []
+        if shapes:
+            shape = shapes[0]
+            cmds.setAttr(f"{shape}.overrideEnabled", 1)
+            col_idx = 6 if color == "blue" else (13 if color == "red" else 17)
+            cmds.setAttr(f"{shape}.overrideColor", col_idx)
+        return ctrl
 
     def save_control_shapes(self):
         """Scans all CTRL_ shapes in scene and caches their exact CV positions."""
@@ -110,7 +159,6 @@ class RigBuilderEngine:
                 num_cvs = cmds.getAttr(f"{shape}.spans") + cmds.getAttr(f"{shape}.degree")
                 cv_points = []
                 for i in range(num_cvs):
-                    # Зчитуємо чисті локальні координати вертексів у просторі самого контролера
                     pt = cmds.xform(f"{shape}.cv[{i}]", query=True, objectSpace=True, translation=True)
                     cv_points.append(pt)
 
@@ -120,8 +168,8 @@ class RigBuilderEngine:
                         "periodic": bool(cmds.getAttr(f"{shape}.form") == 2),
                         "cvs": cv_points
                     }
-            except Exception as e:
-                print(f"Error caching control CVs for {c}: {e}")
+            except Exception:
+                pass
 
         if data:
             try:
@@ -134,7 +182,6 @@ class RigBuilderEngine:
         return False
 
     def load_saved_shapes(self):
-        """Loads cached control shapes from disk."""
         if os.path.exists(self.shapes_file):
             try:
                 with open(self.shapes_file, "r", encoding="utf-8") as f:
@@ -144,10 +191,6 @@ class RigBuilderEngine:
         return {}
 
     def mirror_control_shapes(self, source_side="Left", center_x=0.0):
-        """
-        True World-Space Curve Mirroring (Position + Rotation + Shape).
-        Works seamlessly with selectCurveCV('all') vertex edits.
-        """
         target_side = "Right" if source_side == "Left" else "Left"
         source_ctrls = cmds.ls(f"CTRL_{source_side}*", type="transform") or []
         if not source_ctrls:
@@ -186,7 +229,7 @@ class RigBuilderEngine:
         return True
 
     def build_skeleton_and_rig(self, guides):
-        """Builds skeleton and FK controls, rigorously preserving all CV vertex edits."""
+        """Generates/Rebuilds bone hierarchy, FK controls, and Full Legs IK System."""
         if not guides:
             cmds.warning("No guide points provided!")
             return None
@@ -201,11 +244,9 @@ class RigBuilderEngine:
             cmds.warning("Missing 'Hips' root guide! Please assign 'Hips' tag.")
             return None
 
-        # 1. Автоматично зчитуємо та зберігаємо повернуті вертекси кривих перед видаленням
         self.save_control_shapes()
         cached_shapes = self.load_saved_shapes()
 
-        # 2. Динамічний пошук та сортування хребта
         spine_tags = [t for t in guide_map.keys() if t.startswith("Spine") or t == "Chest"]
 
         def spine_sort_key(name):
@@ -229,26 +270,27 @@ class RigBuilderEngine:
 
             joints_grp = cmds.group(empty=True, name="DooRig_Skeleton_GRP", parent=master_grp)
             controls_grp = cmds.group(empty=True, name="DooRig_Controls_GRP", parent=master_grp)
+            ik_grp = cmds.group(empty=True, name="DooRig_IK_GRP", parent=master_grp)
 
             created_joints = {}
             created_ctrls = {}
             created_zero_grps = {}
 
-            # Створення кісток
+            # 1. Створення кісток
             for tag, pos in guide_map.items():
                 jnt_name = f"JNT_{tag}"
                 cmds.select(clear=True)
                 jnt = cmds.joint(name=jnt_name, position=pos, radius=1.2)
                 created_joints[tag] = jnt
 
-            # Зв'язування Spine ланцюжка
+            # Зв'язування Spine
             prev_spine = "Hips"
             for s_tag in sorted_spines:
                 if s_tag in created_joints and prev_spine in created_joints:
                     cmds.parent(created_joints[s_tag], created_joints[prev_spine])
                 prev_spine = s_tag
 
-            # Зв'язування кінцівок до кісток
+            # Зв'язування кінцівок
             for child_tag, jnt in created_joints.items():
                 if child_tag in sorted_spines:
                     continue
@@ -277,7 +319,7 @@ class RigBuilderEngine:
                 else:
                     cmds.joint(jnt, edit=True, oj="none", zso=True)
 
-            # 3. Створення контролерів із примусовим застосуванням повернених CV вертексів
+            # 2. Створення FK Контролерів
             for tag, jnt in created_joints.items():
                 col = "yellow"
                 if tag.startswith("Left"):
@@ -297,7 +339,8 @@ class RigBuilderEngine:
                 created_zero_grps[tag] = zero_grp
 
                 cmds.matchTransform(zero_grp, jnt, pos=True, rot=True)
-                cmds.parentConstraint(ctrl, jnt, maintainOffset=True)
+                # Створюємо parentConstraint (ім'я важливе для FK/IK перемикання)
+                cmds.parentConstraint(ctrl, jnt, maintainOffset=True, name=f"CONST_FK_{tag}")
 
                 created_pins.append({
                     "name": ctrl,
@@ -306,7 +349,7 @@ class RigBuilderEngine:
                     "pos3d": guide_map[tag]
                 })
 
-            # 4. Ієрархія контролерів
+            # Ієрархія FK контролерів
             prev_ctrl_spine = "Hips"
             for s_tag in sorted_spines:
                 if s_tag in created_zero_grps and prev_ctrl_spine in created_ctrls:
@@ -333,5 +376,114 @@ class RigBuilderEngine:
                 else:
                     cmds.parent(zero_grp, controls_grp)
 
+            # 3. Створення IK Системи для Ніг (Left & Right)
+            for side in ("Left", "Right"):
+                up_leg_jnt = f"JNT_{side}UpLeg"
+                knee_jnt = f"JNT_{side}Knee"
+                foot_jnt = f"JNT_{side}Foot"
+
+                if cmds.objExists(up_leg_jnt) and cmds.objExists(foot_jnt):
+                    # Створення IK Handle (RP solver)
+                    ik_handle_name = f"IK_HDL_{side}Leg"
+                    ik_hdl, _ = cmds.ikHandle(name=ik_handle_name, startJoint=up_leg_jnt, endEffector=foot_jnt, solver="ikRPsolver")
+                    cmds.parent(ik_hdl, ik_grp)
+
+                    # Створення IK Foot Control
+                    col = "blue" if side == "Left" else "red"
+                    ik_foot_ctrl = self._create_box_foot_ctrl(f"{side}Foot", size=3.2, color=col)
+                    ik_foot_zero = cmds.group(ik_foot_ctrl, name=f"GRP_ZERO_IK_{side}Foot")
+                    cmds.matchTransform(ik_foot_zero, foot_jnt, pos=True, rot=False)
+                    cmds.parent(ik_foot_zero, controls_grp)
+
+                    # IK Foot керує IK Handle
+                    cmds.parentConstraint(ik_foot_ctrl, ik_hdl, maintainOffset=True)
+                    # IK Foot керує орієнтацією стопи
+                    cmds.orientConstraint(ik_foot_ctrl, foot_jnt, maintainOffset=True, name=f"CONST_IK_ORIENT_{side}Foot")
+
+                    # Створення IK Pole Vector (Коліно)
+                    pole_ctrl = self._create_pole_ctrl(f"{side}Knee_Pole", size=1.4, color=col)
+                    pole_zero = cmds.group(pole_ctrl, name=f"GRP_ZERO_IK_{side}Knee_Pole")
+
+                    # Виставляємо Pole Vector трохи вперед від коліна (+Z)
+                    knee_pos = cmds.xform(knee_jnt, query=True, worldSpace=True, translation=True)
+                    cmds.xform(pole_zero, worldSpace=True, translation=[knee_pos[0], knee_pos[1], knee_pos[2] + 15.0])
+                    cmds.parent(pole_zero, controls_grp)
+
+                    # Зв'язуємо Pole Vector Constraint
+                    cmds.poleVectorConstraint(pole_ctrl, ik_hdl, name=f"CONST_PV_{side}Leg")
+
+                    # За замовчуванням вмикаємо IK для ніг
+                    created_pins.append({
+                        "name": ik_foot_ctrl,
+                        "hik_tag": f"{side}Foot_IK",
+                        "color": "#2196F3" if col == "blue" else "#F44336",
+                        "pos3d": guide_map.get(f"{side}Foot", [0,0,0])
+                    })
+                    created_pins.append({
+                        "name": pole_ctrl,
+                        "hik_tag": f"{side}Knee_Pole",
+                        "color": "#2196F3" if col == "blue" else "#F44336",
+                        "pos3d": [knee_pos[0], knee_pos[1], knee_pos[2] + 15.0]
+                    })
+
+            # За замовчуванням виставляємо режим IK для ніг
+            self.set_legs_ik_fk_mode(mode="IK")
+
         cmds.select(clear=True)
         return created_pins
+
+    def set_legs_ik_fk_mode(self, mode="IK"):
+        """
+        Switches legs between 'IK' and 'FK' modes without baking.
+        Controls IK handle enable, constraint weights, and controller visibility.
+        """
+        is_ik = (mode.upper() == "IK")
+
+        for side in ("Left", "Right"):
+            ik_hdl = f"IK_HDL_{side}Leg"
+            ik_foot_zero = f"GRP_ZERO_IK_{side}Foot"
+            pole_zero = f"GRP_ZERO_IK_{side}Knee_Pole"
+
+            # FK контролери ніг
+            fk_upleg_zero = f"GRP_ZERO_{side}UpLeg"
+            fk_knee_zero = f"GRP_ZERO_{side}Knee"
+            fk_foot_zero = f"GRP_ZERO_{side}Foot"
+
+            # FK Constraints
+            fk_upleg_const = f"CONST_FK_{side}UpLeg"
+            fk_knee_const = f"CONST_FK_{side}Knee"
+            fk_foot_const = f"CONST_FK_{side}Foot"
+            ik_orient_const = f"CONST_IK_ORIENT_{side}Foot"
+
+            # 1. Видимість IK контролерів
+            if cmds.objExists(ik_foot_zero):
+                cmds.setAttr(f"{ik_foot_zero}.visibility", 1 if is_ik else 0)
+            if cmds.objExists(pole_zero):
+                cmds.setAttr(f"{pole_zero}.visibility", 1 if is_ik else 0)
+
+            # 2. Видимість FK контролерів
+            if cmds.objExists(fk_upleg_zero):
+                cmds.setAttr(f"{fk_upleg_zero}.visibility", 0 if is_ik else 1)
+            if cmds.objExists(fk_knee_zero):
+                cmds.setAttr(f"{fk_knee_zero}.visibility", 0 if is_ik else 1)
+            if cmds.objExists(fk_foot_zero):
+                cmds.setAttr(f"{fk_foot_zero}.visibility", 0 if is_ik else 1)
+
+            # 3. Вмикання/Вимикання IK Handle
+            if cmds.objExists(ik_hdl):
+                cmds.setAttr(f"{ik_hdl}.ikBlend", 1.0 if is_ik else 0.0)
+
+            # 4. Ваги констрейнтів
+            if cmds.objExists(ik_orient_const):
+                weight_attrs = cmds.orientConstraint(ik_orient_const, query=True, weightAliasList=True) or []
+                for w in weight_attrs:
+                    cmds.setAttr(f"{ik_orient_const}.{w}", 1.0 if is_ik else 0.0)
+
+            for fk_const in (fk_upleg_const, fk_knee_const, fk_foot_const):
+                if cmds.objExists(fk_const):
+                    weight_attrs = cmds.parentConstraint(fk_const, query=True, weightAliasList=True) or []
+                    for w in weight_attrs:
+                        cmds.setAttr(f"{fk_const}.{w}", 0.0 if is_ik else 1.0)
+
+        cmds.inViewMessage(amg=f"Legs Mode: <hl>{'IK' if is_ik else 'FK'} Active</hl>", pos="topCenter", fade=True)
+        return True
